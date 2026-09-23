@@ -21,6 +21,7 @@
 #include "engram_store.h"
 #include "engram_align.h"
 #include "engram_alloc.h"
+#include "engram_buf.h"
 #include "engram_chunk.h"
 
 #include <string.h>
@@ -561,4 +562,230 @@ uint64_t engram_store_fingerprint(const engram_store *s)
                                              ENGRAM_SIG_WORDS * sizeof *s->sig, 1u));
     }
     return h;
+}
+
+/* ---- persistence ------------------------------------------------------------------------------
+ * PAYLOAD, version 1, little-endian (engram_buf.h):
+ *   u32 version
+ *   u64 max_episodes, u64 max_text_bytes, u32 chunk_cap, u32 chunk_overlap, u32 recall_c, u32 rank
+ *   f32 w_char3, w_char4, w_word1, w_word2, w_ideo1, w_ideo2; u32 ordered_pairs, fold, utf8; u64 seed;
+ *   u32 tf
+ *   u64 next_id, adds, deletes, evictions, refusals, compactions
+ *   u64 live
+ *   live x { u64 id, u64 time_ms, u32 source, u32 flags, u32 recalls, u32 len, len bytes of text }
+ * The load runs in two passes over the bytes: the first proves the whole payload and totals it without
+ * allocating a thing; only then is the store opened at its exact size and the second pass fills it. */
+#define ENGRAM_STORE_FILE_VERSION 1u
+#define ENGRAM_STORE_REC_MIN      (8u + 8u + 4u + 4u + 4u + 4u + 1u)   /* the smallest episode record */
+
+static void engram_store_put_cfg(engram_wbuf *w, const engram_store_cfg *c)
+{
+    engram_wbuf_u64(w, (uint64_t)c->max_episodes);
+    engram_wbuf_u64(w, (uint64_t)c->max_text_bytes);
+    engram_wbuf_u32(w, (uint32_t)c->chunk_cap);
+    engram_wbuf_u32(w, (uint32_t)c->chunk_overlap);
+    engram_wbuf_u32(w, (uint32_t)c->recall_c);
+    engram_wbuf_u32(w, (uint32_t)c->rank);
+    engram_wbuf_f32(w, c->enc.w_char3);
+    engram_wbuf_f32(w, c->enc.w_char4);
+    engram_wbuf_f32(w, c->enc.w_word1);
+    engram_wbuf_f32(w, c->enc.w_word2);
+    engram_wbuf_f32(w, c->enc.w_ideo1);
+    engram_wbuf_f32(w, c->enc.w_ideo2);
+    engram_wbuf_u32(w, (uint32_t)c->enc.ordered_pairs);
+    engram_wbuf_u32(w, (uint32_t)c->enc.fold);
+    engram_wbuf_u32(w, (uint32_t)c->enc.utf8);
+    engram_wbuf_u64(w, c->enc.seed);
+    engram_wbuf_u32(w, (uint32_t)c->enc.tf);
+}
+
+/* a u64 from the file as a size_t, refusing what does not fit */
+static size_t engram_store_rsize(engram_rbuf *r)
+{
+    uint64_t v = engram_rbuf_u64(r);
+    size_t s = (size_t)v;
+    if ((uint64_t)s != v) { engram_rbuf_fail(r, ENGRAM_E_FORMAT); return 0; }
+    return s;
+}
+
+static void engram_store_get_cfg(engram_rbuf *r, engram_store_cfg *c)
+{
+    uint32_t v;
+    memset(c, 0, sizeof *c);
+    c->max_episodes = engram_store_rsize(r);
+    c->max_text_bytes = engram_store_rsize(r);
+    c->chunk_cap = engram_rbuf_u32(r);
+    c->chunk_overlap = engram_rbuf_u32(r);
+    c->recall_c = engram_rbuf_u32(r);
+    v = engram_rbuf_u32(r);
+    c->rank = v == 0u ? ENGRAM_RANK_FULL : v == 1u ? ENGRAM_RANK_BAG : ENGRAM_RANK_EXACT;
+    if (v > 2u) engram_rbuf_fail(r, ENGRAM_E_FORMAT);
+    c->enc.w_char3 = engram_rbuf_f32_finite(r);
+    c->enc.w_char4 = engram_rbuf_f32_finite(r);
+    c->enc.w_word1 = engram_rbuf_f32_finite(r);
+    c->enc.w_word2 = engram_rbuf_f32_finite(r);
+    c->enc.w_ideo1 = engram_rbuf_f32_finite(r);
+    c->enc.w_ideo2 = engram_rbuf_f32_finite(r);
+    v = engram_rbuf_u32(r);
+    if (v > 1u) engram_rbuf_fail(r, ENGRAM_E_FORMAT);
+    c->enc.ordered_pairs = (int)v;
+    v = engram_rbuf_u32(r);
+    c->enc.fold = v == (uint32_t)ENGRAM_FOLD_NONE ? ENGRAM_FOLD_NONE
+                : v == (uint32_t)ENGRAM_FOLD_CASE ? ENGRAM_FOLD_CASE : ENGRAM_FOLD_COMPAT;
+    if (v != (uint32_t)c->enc.fold) engram_rbuf_fail(r, ENGRAM_E_FORMAT);
+    v = engram_rbuf_u32(r);
+    c->enc.utf8 = v == (uint32_t)ENGRAM_UTF8_STRICT ? ENGRAM_UTF8_STRICT : ENGRAM_UTF8_REPLACE;
+    if (v != (uint32_t)c->enc.utf8) engram_rbuf_fail(r, ENGRAM_E_FORMAT);
+    c->enc.seed = engram_rbuf_u64(r);
+    v = engram_rbuf_u32(r);
+    c->enc.tf = v == (uint32_t)ENGRAM_TF_LINEAR ? ENGRAM_TF_LINEAR : v == (uint32_t)ENGRAM_TF_SQRT ? ENGRAM_TF_SQRT
+              : v == (uint32_t)ENGRAM_TF_QUARTER ? ENGRAM_TF_QUARTER : ENGRAM_TF_SIGN;
+    if (v != (uint32_t)c->enc.tf) engram_rbuf_fail(r, ENGRAM_E_FORMAT);
+}
+
+engram_rc engram_store_serialize(const engram_store *s, uint8_t **out, size_t *n)
+{
+    engram_wbuf w;
+    size_t slot;
+    if (out) *out = NULL;
+    if (n) *n = 0;
+    if (!s || !out || !n) return ENGRAM_E_ARG;
+    engram_wbuf_init(&w);
+    engram_wbuf_reserve(&w, 160u + s->live * ENGRAM_STORE_REC_MIN + s->live_bytes);
+    engram_wbuf_u32(&w, ENGRAM_STORE_FILE_VERSION);
+    engram_store_put_cfg(&w, &s->cfg);
+    engram_wbuf_u64(&w, s->next_id);
+    engram_wbuf_u64(&w, s->adds);
+    engram_wbuf_u64(&w, s->deletes);
+    engram_wbuf_u64(&w, s->evictions);
+    engram_wbuf_u64(&w, s->refusals);
+    engram_wbuf_u64(&w, s->compactions);
+    engram_wbuf_u64(&w, (uint64_t)s->live);
+    for (slot = 0; slot < s->n; slot++) {
+        if (!(s->flags[slot] & ENGRAM_EPI_LIVE)) continue;
+        engram_wbuf_u64(&w, s->id[slot]);
+        engram_wbuf_u64(&w, s->time_ms[slot]);
+        engram_wbuf_u32(&w, s->source[slot]);
+        engram_wbuf_u32(&w, s->flags[slot]);
+        engram_wbuf_u32(&w, s->recalls[slot]);
+        engram_wbuf_u32(&w, (uint32_t)s->len[slot]);
+        engram_wbuf_bytes(&w, s->text + s->off[slot], s->len[slot]);
+    }
+    return engram_wbuf_finish(&w, out, n);
+}
+
+engram_rc engram_store_deserialize(engram_store **out, const void *p, size_t n)
+{
+    engram_rbuf r;
+    engram_store_cfg cfg;
+    engram_store *s = NULL;
+    uint64_t next_id, adds, deletes, evictions, refusals, compactions, prev = 0;
+    size_t live, i, bytes = 0, cons = 0, body;
+    uint32_t ver;
+    engram_rc rc;
+    if (out) *out = NULL;
+    if (!out || (!p && n)) return ENGRAM_E_ARG;
+    engram_rbuf_init(&r, p, n);
+    ver = engram_rbuf_u32(&r);
+    if (engram_rbuf_status(&r) == ENGRAM_OK && ver != ENGRAM_STORE_FILE_VERSION)
+        engram_rbuf_fail(&r, ver == 0u ? ENGRAM_E_FORMAT : ENGRAM_E_VERSION);
+    engram_store_get_cfg(&r, &cfg);
+    next_id = engram_rbuf_u64(&r);
+    adds = engram_rbuf_u64(&r);
+    deletes = engram_rbuf_u64(&r);
+    evictions = engram_rbuf_u64(&r);
+    refusals = engram_rbuf_u64(&r);
+    compactions = engram_rbuf_u64(&r);
+    live = engram_store_rsize(&r);
+    if ((rc = engram_rbuf_status(&r)) != ENGRAM_OK) return rc;
+    if (engram_store_cfg_check(&cfg) != ENGRAM_OK) return ENGRAM_E_FORMAT;
+    if (next_id == 0u || live > cfg.max_episodes || live > engram_rbuf_left(&r) / ENGRAM_STORE_REC_MIN)
+        return ENGRAM_E_FORMAT;
+
+    /* pass 1: prove every record, allocate nothing */
+    body = engram_rbuf_pos(&r);
+    for (i = 0; i < live; i++) {
+        uint64_t id = engram_rbuf_u64(&r);
+        uint32_t flags, len;
+        (void)engram_rbuf_u64(&r);                     /* time: any value */
+        (void)engram_rbuf_u32(&r);                     /* source: any value */
+        flags = engram_rbuf_u32(&r);
+        (void)engram_rbuf_u32(&r);                     /* recalls: any value */
+        len = engram_rbuf_u32(&r);
+        if (engram_rbuf_status(&r) != ENGRAM_OK) break;
+        if (id == 0u || id <= prev || id >= next_id ||
+            (flags != ENGRAM_EPI_LIVE && flags != (ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED)) ||
+            len == 0u || len > cfg.chunk_cap || len > cfg.max_text_bytes - bytes) {
+            engram_rbuf_fail(&r, ENGRAM_E_FORMAT);
+            break;
+        }
+        if (!engram_rbuf_skip(&r, len)) break;
+        prev = id;
+        bytes += len;
+        if (flags & ENGRAM_EPI_CONSOLIDATED) cons++;
+    }
+    if ((rc = engram_rbuf_end(&r)) != ENGRAM_OK) return rc;
+
+    /* pass 2: open at the exact size and fill; a text that does not encode is refused */
+    rc = engram_store_open(&s, &cfg);
+    if (rc != ENGRAM_OK) return rc == ENGRAM_E_MEM ? rc : ENGRAM_E_FORMAT;
+    if (live > 0u && engram_store_reserve(s, live, bytes) != ENGRAM_OK) { engram_store_close(s); return ENGRAM_E_MEM; }
+    engram_rbuf_init(&r, p, n);
+    (void)engram_rbuf_skip(&r, body);
+    for (i = 0; i < live; i++) {
+        const uint8_t *t;
+        uint32_t len;
+        s->id[i] = engram_rbuf_u64(&r);
+        s->time_ms[i] = engram_rbuf_u64(&r);
+        s->source[i] = engram_rbuf_u32(&r);
+        s->flags[i] = engram_rbuf_u32(&r);
+        s->recalls[i] = engram_rbuf_u32(&r);
+        len = engram_rbuf_u32(&r);
+        t = engram_rbuf_view(&r, len);
+        if (!t) { engram_store_close(s); return ENGRAM_E_INTERNAL; }        /* pass 1 proved it */
+        rc = engram_encode_sig(&cfg.enc, t, len, s->sig + i * ENGRAM_SIG_WORDS, NULL);
+        if (rc != ENGRAM_OK) { engram_store_close(s); return ENGRAM_E_FORMAT; }
+        memcpy(s->text + s->text_used, t, len);
+        s->off[i] = s->text_used;
+        s->len[i] = (uint16_t)len;
+        s->text_used += len;
+    }
+    s->n = live;
+    s->live = live;
+    s->live_bytes = bytes;
+    s->consolidated = cons;
+    s->next_id = next_id;
+    s->adds = adds; s->deletes = deletes; s->evictions = evictions;
+    s->refusals = refusals; s->compactions = compactions;
+    *out = s;
+    return ENGRAM_OK;
+}
+
+engram_rc engram_store_save(const engram_store *s, const char *path, const engram_key *key)
+{
+    uint8_t *p = NULL;
+    size_t pn = 0;
+    engram_rc rc;
+    if (!s || !path) return ENGRAM_E_ARG;
+    rc = engram_store_serialize(s, &p, &pn);
+    if (rc != ENGRAM_OK) return rc;
+    rc = engram_seal_write(path, ENGRAM_KIND_STORE, key, p, pn);
+    engram_wipe(p, pn);
+    engram_free(p);
+    return rc;
+}
+
+engram_rc engram_store_load(engram_store **out, const char *path, const engram_key *key)
+{
+    uint8_t *p = NULL;
+    size_t pn = 0;
+    engram_rc rc;
+    if (out) *out = NULL;
+    if (!out || !path) return ENGRAM_E_ARG;
+    rc = engram_seal_read(path, ENGRAM_KIND_STORE, key, &p, &pn);
+    if (rc != ENGRAM_OK) return rc;
+    rc = engram_store_deserialize(out, p, pn);
+    engram_wipe(p, pn);
+    engram_free(p);
+    return rc;
 }

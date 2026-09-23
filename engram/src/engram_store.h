@@ -31,6 +31,7 @@
 
 #include "engram.h"
 #include "engram_enc.h"
+#include "engram_seal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -171,6 +172,37 @@ void      engram_store_stats_get(const engram_store *s, engram_store_stats *st);
  * chunking, C, rank). Two stores with equal fingerprints answer every query the same way. Capacity and
  * scratch memory are not part of it. */
 uint64_t  engram_store_fingerprint(const engram_store *s);
+
+/* ---- PERSISTENCE ---------------------------------------------------------------------------------
+ * A saved store is its configuration, its lifetime counters and every LIVE episode -- id, time,
+ * source, flags, recall count, text -- in an ENGRAM container of kind ENGRAM_KIND_STORE (engram_seal.h),
+ * sealed when a key is given. Tombstones are not written: the loaded store is the compacted store,
+ * which compaction already guarantees is the same logical store.
+ *
+ * SIGNATURES ARE NOT WRITTEN. They are a deterministic function of the text and the geometry, and the
+ * load recomputes them -- which is also the proof that every loaded episode is one this store could
+ * hold (it encodes, under the file's own UTF-8 policy). A file therefore cannot carry a signature
+ * that disagrees with its text; and a store written by a build whose encoder geometry has since
+ * changed loads and is re-indexed under the new one. The text is the memory; the signature is an
+ * index.
+ *
+ * THE LOADER TRUSTS NOTHING IT READS. Every count is bounded by the bytes that remain before memory is
+ * committed to it; ids must be non-zero, strictly increasing and below the next id; flags exactly LIVE
+ * or LIVE | CONSOLIDATED; each text 1 .. chunk_cap bytes; the totals within the file's own caps; the
+ * configuration must pass the check open() applies. Anything else is ENGRAM_E_FORMAT (a payload of a
+ * later version: ENGRAM_E_VERSION), and nothing is returned: *out is a complete store or NULL.
+ *
+ * save does not touch the store. load(save(s)) has s's fingerprint and s's counters, and answers every
+ * query as s does (test_persist). The plaintext is wiped from memory before it is freed.
+ *
+ * MEASURED (test_persist F9, the development machine, -O2): the whole scale corpus -- 26,139 episodes,
+ * 7.9 MB of text -- saved sealed in 243 ms and loaded, every signature recomputed, in 385 ms. */
+engram_rc engram_store_serialize(const engram_store *s, uint8_t **out, size_t *n);
+engram_rc engram_store_deserialize(engram_store **out, const void *p, size_t n);
+
+/* key NULL: a PLAIN file (integrity against corruption, not against a deliberate edit). */
+engram_rc engram_store_save(const engram_store *s, const char *path, const engram_key *key);
+engram_rc engram_store_load(engram_store **out, const char *path, const engram_key *key);
 
 #ifdef __cplusplus
 }

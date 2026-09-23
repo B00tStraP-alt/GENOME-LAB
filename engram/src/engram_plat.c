@@ -196,20 +196,25 @@ engram_rc engram_wall_format(int64_t ms, char *buf, size_t cap)
  * PATHS (Win32): UTF-8 -> UTF-16, refusing invalid input
  * ============================================================================================== */
 #ifdef _WIN32
-static wchar_t *engram_widen(const char *utf8)
+/* UTF-8 to UTF-16. ENGRAM_E_UTF8 for a name with no UTF-16 form, ENGRAM_E_MEM when the copy cannot be
+ * allocated -- two different failures, reported as two (an allocation failure reported as bad UTF-8
+ * would send the caller looking for a problem in the file name). */
+static engram_rc engram_widen(const char *utf8, wchar_t **out)
 {
     int n;
     wchar_t *w;
-    if (!utf8) return NULL;
+    *out = NULL;
+    if (!utf8) return ENGRAM_E_ARG;
     n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, NULL, 0);
-    if (n <= 0) return NULL;
+    if (n <= 0) return ENGRAM_E_UTF8;
     w = (wchar_t *)engram_array((size_t)n, sizeof(wchar_t));
-    if (!w) return NULL;
+    if (!w) return ENGRAM_E_MEM;
     if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, w, n) != n) {
         engram_free(w);
-        return NULL;
+        return ENGRAM_E_UTF8;
     }
-    return w;
+    *out = w;
+    return ENGRAM_OK;
 }
 #endif
 
@@ -248,12 +253,12 @@ engram_rc engram_file_read(const char *path, uint8_t **out, size_t *len)
     LARGE_INTEGER sz;
     uint8_t *buf;
     size_t got = 0;
+    engram_rc rc;
     if (out) *out = NULL;
     if (len) *len = 0;
     if (!path || !out || !len) return ENGRAM_E_ARG;
     if (engram_io_tick()) return ENGRAM_E_IO;
-    w = engram_widen(path);
-    if (!w) return ENGRAM_E_UTF8;
+    if ((rc = engram_widen(path, &w)) != ENGRAM_OK) return rc;
     h = CreateFileW(w, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     engram_free(w);
@@ -283,7 +288,7 @@ engram_rc engram_file_read(const char *path, uint8_t **out, size_t *len)
     return ENGRAM_OK;
 }
 
-engram_rc engram_file_write_atomic(const char *path, const void *data, size_t len)
+static engram_rc engram_file_commit(const char *path, const void *data, size_t len, int exclusive)
 {
     char *tmp = NULL;
     wchar_t *wt = NULL, *wp = NULL;
@@ -294,9 +299,7 @@ engram_rc engram_file_write_atomic(const char *path, const void *data, size_t le
     if (!path || (!data && len)) return ENGRAM_E_ARG;
     rc = engram_tmp_name(path, &tmp);
     if (rc != ENGRAM_OK) return rc;
-    wt = engram_widen(tmp);
-    wp = engram_widen(path);
-    if (!wt || !wp) { rc = ENGRAM_E_UTF8; goto done; }
+    if ((rc = engram_widen(tmp, &wt)) != ENGRAM_OK || (rc = engram_widen(path, &wp)) != ENGRAM_OK) goto done;
 
     /* 1. write the complete contents to a fresh temporary. CREATE_NEW: never reuse a stale one. */
     if (engram_io_tick()) { rc = ENGRAM_E_IO; goto done; }
@@ -315,10 +318,15 @@ engram_rc engram_file_write_atomic(const char *path, const void *data, size_t le
         CloseHandle(h); DeleteFileW(wt); rc = ENGRAM_E_IO; goto done;
     }
     CloseHandle(h);
-    /* 3 + 4. rename over the target; WRITE_THROUGH does not return until the rename is durable. */
-    if (engram_io_tick() ||
-        !MoveFileExW(wt, wp, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileW(wt); rc = ENGRAM_E_IO; goto done;
+    /* 3 + 4. rename over the target; WRITE_THROUGH does not return until the rename is durable.
+     * Exclusive: without MOVEFILE_REPLACE_EXISTING the move itself refuses an existing target, in
+     * one step -- there is no moment between a check and the commit for another writer to use. */
+    if (engram_io_tick()) { DeleteFileW(wt); rc = ENGRAM_E_IO; goto done; }
+    if (!MoveFileExW(wt, wp, exclusive ? MOVEFILE_WRITE_THROUGH : MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DWORD e = GetLastError();
+        DeleteFileW(wt);
+        rc = exclusive && (e == ERROR_ALREADY_EXISTS || e == ERROR_FILE_EXISTS) ? ENGRAM_E_EXISTS : ENGRAM_E_IO;
+        goto done;
     }
     rc = ENGRAM_OK;
 done:
@@ -331,9 +339,7 @@ int engram_file_exists(const char *path)
     wchar_t *w;
     WIN32_FILE_ATTRIBUTE_DATA a;
     BOOL ok;
-    if (!path) return 0;
-    w = engram_widen(path);
-    if (!w) return 0;
+    if (!path || engram_widen(path, &w) != ENGRAM_OK) return 0;
     ok = GetFileAttributesExW(w, GetFileExInfoStandard, &a);
     engram_free(w);
     return ok && !(a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
@@ -344,11 +350,11 @@ engram_rc engram_file_size(const char *path, uint64_t *size)
     wchar_t *w;
     WIN32_FILE_ATTRIBUTE_DATA a;
     BOOL ok;
+    engram_rc rc;
     if (size) *size = 0;
     if (!path || !size) return ENGRAM_E_ARG;
     if (engram_io_tick()) return ENGRAM_E_IO;
-    w = engram_widen(path);
-    if (!w) return ENGRAM_E_UTF8;
+    if ((rc = engram_widen(path, &w)) != ENGRAM_OK) return rc;
     ok = GetFileAttributesExW(w, GetFileExInfoStandard, &a);
     engram_free(w);
     if (!ok || (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) return ENGRAM_E_NOTFOUND;
@@ -361,10 +367,10 @@ engram_rc engram_file_remove(const char *path)
     wchar_t *w;
     BOOL ok;
     DWORD e;
+    engram_rc rc;
     if (!path) return ENGRAM_E_ARG;
     if (engram_io_tick()) return ENGRAM_E_IO;
-    w = engram_widen(path);
-    if (!w) return ENGRAM_E_UTF8;
+    if ((rc = engram_widen(path, &w)) != ENGRAM_OK) return rc;
     ok = DeleteFileW(w);
     e = ok ? 0 : GetLastError();
     engram_free(w);
@@ -377,10 +383,10 @@ engram_rc engram_dir_make(const char *path)
     wchar_t *w;
     BOOL ok;
     DWORD e;
+    engram_rc rc;
     if (!path) return ENGRAM_E_ARG;
     if (engram_io_tick()) return ENGRAM_E_IO;
-    w = engram_widen(path);
-    if (!w) return ENGRAM_E_UTF8;
+    if ((rc = engram_widen(path, &w)) != ENGRAM_OK) return rc;
     ok = CreateDirectoryW(w, NULL);
     e = ok ? 0 : GetLastError();
     engram_free(w);
@@ -457,7 +463,7 @@ static int engram_write_all(int fd, const uint8_t *p, size_t len)
     return 0;
 }
 
-engram_rc engram_file_write_atomic(const char *path, const void *data, size_t len)
+static engram_rc engram_file_commit(const char *path, const void *data, size_t len, int exclusive)
 {
     char *tmp = NULL, *dir = NULL;
     int fd, dfd;
@@ -465,6 +471,10 @@ engram_rc engram_file_write_atomic(const char *path, const void *data, size_t le
     if (!path || (!data && len)) return ENGRAM_E_ARG;
     rc = engram_tmp_name(path, &tmp);
     if (rc != ENGRAM_OK) return rc;
+    /* Every allocation BEFORE step 1: an allocation that failed after the rename would report a
+     * failure for a write that had in fact happened. */
+    dir = engram_dirname_dup(path);
+    if (!dir) { rc = ENGRAM_E_MEM; goto done; }
 
     /* 1. write the complete contents to a fresh temporary. O_EXCL: never reuse a stale one. */
     if (engram_io_tick()) { rc = ENGRAM_E_IO; goto done; }
@@ -476,11 +486,22 @@ engram_rc engram_file_write_atomic(const char *path, const void *data, size_t le
     /* 2. flush to the device. */
     if (engram_io_tick() || fsync(fd) != 0) { close(fd); unlink(tmp); rc = ENGRAM_E_IO; goto done; }
     if (close(fd) != 0) { unlink(tmp); rc = ENGRAM_E_IO; goto done; }
-    /* 3. rename over the target. */
-    if (engram_io_tick() || rename(tmp, path) != 0) { unlink(tmp); rc = ENGRAM_E_IO; goto done; }
-    /* 4. flush the directory entry, so the rename itself survives a power cut. */
-    dir = engram_dirname_dup(path);
-    if (!dir) { rc = ENGRAM_E_MEM; goto done; }       /* the file IS written; durability unknown */
+    /* 3. rename over the target -- or, exclusive, LINK the temporary to the target name: link()
+     * refuses an existing name in the same single step that creates it (EEXIST), so nothing is ever
+     * replaced, whatever happened since any earlier check. The temporary's name is then dropped; if
+     * that fails the orphan is the sweep's (engram_tmp_sweep), and the target is already whole. */
+    if (engram_io_tick()) { unlink(tmp); rc = ENGRAM_E_IO; goto done; }
+    if (exclusive) {
+        if (link(tmp, path) != 0) {
+            int e = errno;
+            unlink(tmp);
+            rc = e == EEXIST ? ENGRAM_E_EXISTS : ENGRAM_E_IO;
+            goto done;
+        }
+        (void)unlink(tmp);
+    } else if (rename(tmp, path) != 0) { unlink(tmp); rc = ENGRAM_E_IO; goto done; }
+    /* 4. flush the directory entry, so the rename itself survives a power cut. An IO failure HERE is
+     * the one failure after the commit point: the file is written, its durability unconfirmed. */
     if (engram_io_tick()) { rc = ENGRAM_E_IO; goto done; }
     do { dfd = open(dir, O_RDONLY); } while (dfd < 0 && errno == EINTR);
     if (dfd >= 0) {
@@ -556,19 +577,22 @@ char *engram_path_join(const char *dir, const char *name)
 }
 
 #ifdef _WIN32
-static char *engram_narrow(const wchar_t *w)
+/* UTF-16 to UTF-8: ENGRAM_E_UTF8 for a name with no UTF-8 form, ENGRAM_E_MEM for an allocation. */
+static engram_rc engram_narrow(const wchar_t *w, char **out)
 {
     int n;
     char *s;
+    *out = NULL;
     n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w, -1, NULL, 0, NULL, NULL);
-    if (n <= 0) return NULL;
+    if (n <= 0) return ENGRAM_E_UTF8;
     s = (char *)engram_malloc((size_t)n);
-    if (!s) return NULL;
+    if (!s) return ENGRAM_E_MEM;
     if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w, -1, s, n, NULL, NULL) != n) {
         engram_free(s);
-        return NULL;
+        return ENGRAM_E_UTF8;
     }
-    return s;
+    *out = s;
+    return ENGRAM_OK;
 }
 
 engram_rc engram_dir_list(const char *dir, engram_dir_cb cb, void *user)
@@ -579,13 +603,14 @@ engram_rc engram_dir_list(const char *dir, engram_dir_cb cb, void *user)
     WIN32_FIND_DATAW fd;
     DWORD e;
     int stopped = 0;
+    engram_rc rc;
     if (!dir || !cb) return ENGRAM_E_ARG;
     if (engram_io_tick()) return ENGRAM_E_IO;
     pat = engram_path_join(dir, "*");
     if (!pat) return ENGRAM_E_MEM;
-    wpat = engram_widen(pat);
+    rc = engram_widen(pat, &wpat);
     engram_free(pat);
-    if (!wpat) return ENGRAM_E_UTF8;
+    if (rc != ENGRAM_OK) return rc;
     h = FindFirstFileW(wpat, &fd);
     engram_free(wpat);
     if (h == INVALID_HANDLE_VALUE) {
@@ -595,9 +620,11 @@ engram_rc engram_dir_list(const char *dir, engram_dir_cb cb, void *user)
     }
     do {
         char *name;
+        engram_rc nr;
         if (fd.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_DEVICE)) continue;
-        name = engram_narrow(fd.cFileName);
-        if (!name) {
+        nr = engram_narrow(fd.cFileName, &name);
+        if (nr == ENGRAM_E_MEM) { FindClose(h); return ENGRAM_E_MEM; }   /* never a silently short list */
+        if (nr != ENGRAM_OK) {
             /* NTFS permits unpaired surrogates in names, which have no UTF-8 form. Such a file is
              * skipped VISIBLY -- logged, counted by the log -- rather than silently. */
             engram_log(ENGRAM_LOG_WARN, "plat", "skipped a file in %s whose name is not valid UTF-16", dir);
@@ -854,4 +881,15 @@ unsigned engram_cpu_count(void)
     long n = sysconf(_SC_NPROCESSORS_ONLN);
     return n > 0 ? (unsigned)n : 1u;
 #endif
+}
+
+/* ---- the two public faces of the one commit ------------------------------------------------ */
+engram_rc engram_file_write_atomic(const char *path, const void *data, size_t len)
+{
+    return engram_file_commit(path, data, len, 0);
+}
+
+engram_rc engram_file_create_atomic(const char *path, const void *data, size_t len)
+{
+    return engram_file_commit(path, data, len, 1);
 }

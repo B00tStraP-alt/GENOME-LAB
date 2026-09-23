@@ -479,6 +479,120 @@ static void test_files_atomic_under_fault(void)
     ET_OK(engram_file_remove(path));
 }
 
+/* Every ALLOCATION of an atomic write failed in turn. An allocation is never an IO failure after the
+ * commit point: each one must precede the rename, so every failure leaves the old file byte for byte,
+ * reports ENGRAM_E_MEM (not a misleading code), and leaves no temporary behind. */
+static void test_files_atomic_under_alloc_fault(void)
+{
+    const char *path = SCRATCH_DIR "/survivor2.txt";
+    const char *old_text = "the old memory, intact";
+    const char *new_text = "the new memory, refused whole";
+    size_t lo = strlen(old_text), ln = strlen(new_text);
+    uint8_t *data = NULL;
+    size_t len = 0;
+    uint64_t k, calls;
+    unsigned wrong_rc = 0, changed = 0;
+
+    ET_SECTION("atomicity: every allocation of a write failed in turn -- E_MEM, the old file intact");
+    ET_OK(engram_file_write_atomic(path, old_text, lo));
+    engram_alloc_reset_run();
+    ET_OK(engram_file_write_atomic(path, old_text, lo));
+    calls = engram_alloc_calls();
+    ET_CHECKF(calls >= 2u, "an atomic write made only %llu allocations", (unsigned long long)calls);
+    for (k = 1; k <= calls; k++) {
+        engram_rc rc;
+        engram_alloc_reset_run();
+        engram_alloc_fail_at(k);
+        rc = engram_file_write_atomic(path, new_text, ln);
+        engram_alloc_fail_at(0u);
+        if (rc != ENGRAM_E_MEM) wrong_rc++;
+        if (engram_file_read(path, &data, &len) != ENGRAM_OK || len != lo || memcmp(data, old_text, lo) != 0) changed++;
+        engram_free(data);
+        data = NULL;
+    }
+    ET_EQ_U64(wrong_rc, 0u);
+    ET_EQ_U64(changed, 0u);
+    ET_EQ_U64(count_orphans(SCRATCH_DIR), 0u);
+    printf("       %llu allocations per write, each failed in turn: %u other codes, %u files changed\n",
+           (unsigned long long)calls, wrong_rc, changed);
+    ET_OK(engram_file_remove(path));
+}
+
+/* The exclusive create: never replaces, and the refusal is the commit's own -- so a keyfile can never be
+ * overwritten, not by a failed check, not by a race. Every IO operation and every allocation of a
+ * create is failed in turn: the target is then absent or complete, never partial, and no temporary
+ * remains. */
+static void test_files_create_exclusive(void)
+{
+    const char *path = SCRATCH_DIR "/only_once.bin";
+    const char *first = "the first and only contents";
+    const char *second = "an attempt to replace them";
+    size_t lf = strlen(first), ls = strlen(second);
+    uint8_t *data = NULL;
+    size_t len = 0;
+    uint64_t k, ops, calls;
+    unsigned partial = 0, silent = 0, wrong_rc = 0, present = 0;
+
+    ET_SECTION("create: an absent target is created whole; an existing one is REFUSED and left byte-identical");
+    (void)engram_file_remove(path);
+    ET_OK(engram_file_create_atomic(path, first, lf));
+    ET_OK(engram_file_read(path, &data, &len));
+    ET_CHECK(data && len == lf && memcmp(data, first, lf) == 0);
+    engram_free(data); data = NULL;
+    ET_RC(engram_file_create_atomic(path, second, ls), ENGRAM_E_EXISTS);
+    ET_OK(engram_file_read(path, &data, &len));
+    ET_CHECK(data && len == lf && memcmp(data, first, lf) == 0);
+    engram_free(data); data = NULL;
+    ET_RC(engram_file_create_atomic(NULL, first, lf), ENGRAM_E_ARG);
+    ET_EQ_U64(count_orphans(SCRATCH_DIR), 0u);
+
+    ET_SECTION("create: every IO operation failed in turn -- absent or whole, never partial, never silent");
+    ET_OK(engram_file_remove(path));
+    engram_io_reset();
+    ET_OK(engram_file_create_atomic(path, first, lf));
+    ops = engram_io_ops();
+    for (k = 1; k <= ops; k++) {
+        engram_rc rc;
+        (void)engram_file_remove(path);
+        engram_io_reset();
+        engram_io_fail_at(k);
+        rc = engram_file_create_atomic(path, first, lf);
+        engram_io_fail_at(0u);
+        if (rc == ENGRAM_OK) silent++;
+        if (engram_file_read(path, &data, &len) == ENGRAM_OK) {
+            present++;
+            if (len != lf || memcmp(data, first, lf) != 0) partial++;
+            engram_free(data); data = NULL;
+        }
+    }
+    ET_EQ_U64(partial, 0u);
+    ET_EQ_U64(silent, 0u);
+    ET_EQ_U64(count_orphans(SCRATCH_DIR), 0u);
+    printf("       %llu IO operations per create, each failed: 0 partial, 0 unreported, %u after the commit point\n",
+           (unsigned long long)ops, present);
+
+    ET_SECTION("create: every allocation failed in turn -- E_MEM, the target absent");
+    (void)engram_file_remove(path);
+    engram_alloc_reset_run();
+    ET_OK(engram_file_create_atomic(path, first, lf));
+    calls = engram_alloc_calls();
+    present = 0;
+    for (k = 1; k <= calls; k++) {
+        engram_rc rc;
+        (void)engram_file_remove(path);
+        engram_alloc_reset_run();
+        engram_alloc_fail_at(k);
+        rc = engram_file_create_atomic(path, first, lf);
+        engram_alloc_fail_at(0u);
+        if (rc != ENGRAM_E_MEM) wrong_rc++;
+        if (engram_file_exists(path)) present++;
+    }
+    ET_EQ_U64(wrong_rc, 0u);
+    ET_EQ_U64(present, 0u);
+    ET_EQ_U64(count_orphans(SCRATCH_DIR), 0u);
+    (void)engram_file_remove(path);
+}
+
 static void test_dirs_and_orphans(void)
 {
     char *j;
@@ -1016,6 +1130,8 @@ int main(void)
     test_clock();
     test_files();
     test_files_atomic_under_fault();
+    test_files_atomic_under_alloc_fault();
+    test_files_create_exclusive();
     test_dirs_and_orphans();
     test_entropy_host();
     test_log();

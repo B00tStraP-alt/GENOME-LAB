@@ -48,6 +48,7 @@
 #define ENGRAM_ROUTER_H
 
 #include "engram.h"
+#include "engram_seal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -130,6 +131,26 @@ uint64_t  engram_router_fingerprint(const engram_router *r);
  * map exact, buckets consistent with the counts). ENGRAM_OK, or ENGRAM_E_INTERNAL. For tests; cost
  * O(keys + buckets). */
 engram_rc engram_router_check(const engram_router *r);
+
+/* ---- PERSISTENCE ---------------------------------------------------------------------------------
+ * A saved router is its configuration, its counters, its centroids and every (id, key), in an ENGRAM
+ * container of kind ENGRAM_KIND_ROUTER (engram_seal.h), sealed when a key is given.
+ *
+ * BUCKETS ARE NOT WRITTEN. Every key sits in its nearest centroid's bucket (the invariant
+ * engram_router_check proves), so the load recomputes each key's bucket from the centroids -- and a
+ * file therefore cannot place a key anywhere else: what loads is a router the API could have built.
+ * The price is C dot products per key at load: 4,301 keys of dimension 512 in 64 buckets load in
+ * 111 ms (test_persist F8, the development machine, -O2).
+ *
+ * THE LOADER TRUSTS NOTHING IT READS: every count bounded by the bytes that remain before memory is
+ * committed to it; the configuration checked as open() checks it; every key and centroid a finite
+ * unit vector; every id non-zero and distinct. Anything else is ENGRAM_E_FORMAT (a later payload
+ * version: ENGRAM_E_VERSION), and *out is a complete router or NULL. load(save(r)) has r's fingerprint
+ * and answers every search as r does. */
+engram_rc engram_router_serialize(const engram_router *r, uint8_t **out, size_t *n);
+engram_rc engram_router_deserialize(engram_router **out, const void *p, size_t n);
+engram_rc engram_router_save(const engram_router *r, const char *path, const engram_key *key);
+engram_rc engram_router_load(engram_router **out, const char *path, const engram_key *key);
 
 #ifdef __cplusplus
 }

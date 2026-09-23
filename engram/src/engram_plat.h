@@ -99,6 +99,13 @@ engram_rc engram_file_read(const char *path, uint8_t **out, size_t *len);
  * or holds exactly `data`, never anything in between. */
 engram_rc engram_file_write_atomic(const char *path, const void *data, size_t len);
 
+/* The same four steps, but the commit NEVER replaces: ENGRAM_E_EXISTS if the target exists, decided by
+ * the commit itself (link() on POSIX, MoveFileEx without REPLACE_EXISTING on Windows), so no check made
+ * earlier -- by this process or another -- can be overtaken. For files whose loss is unrecoverable (the
+ * keyfile: its salt is the only way back to the master key). On POSIX the filesystem must support
+ * hard links (ext4, xfs, btrfs, tmpfs, APFS do; FAT does not, and refuses with ENGRAM_E_IO). */
+engram_rc engram_file_create_atomic(const char *path, const void *data, size_t len);
+
 /* 1 if the path exists and is a regular file, 0 if not. Never fails: "cannot tell" is "no". */
 int engram_file_exists(const char *path);
 

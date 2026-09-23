@@ -13,6 +13,7 @@
  * ============================================================================================== */
 #include "engram_router.h"
 #include "engram_alloc.h"
+#include "engram_buf.h"
 #include "engram_rng.h"
 
 #include <math.h>
@@ -643,4 +644,182 @@ engram_rc engram_router_check(const engram_router *r)
             if (engram_nearest(r, r->key + i * r->cfg.dim) != r->bkt[i]) return ENGRAM_E_INTERNAL;
     }
     return ENGRAM_OK;
+}
+
+/* ---- persistence --------------------------------------------------------------------------------
+ * PAYLOAD, version 1, little-endian (engram_buf.h):
+ *   u32 version
+ *   u32 dim, nprobe, iters; u64 train_max, seed
+ *   u32 trained, C
+ *   u64 adds, removes, trains, searches
+ *   u64 n
+ *   trained ? C x dim f32 centroids : nothing
+ *   n x { u64 id, dim x f32 key }          in index order
+ * Every float is read through engram_rbuf_f32s_finite, then proven unit. The id map is built as add
+ * builds it; the buckets are recomputed (see engram_router.h). */
+#define ENGRAM_ROUTER_FILE_VERSION 1u
+
+engram_rc engram_router_serialize(const engram_router *r, uint8_t **out, size_t *n)
+{
+    engram_wbuf w;
+    size_t i, dim;
+    if (out) *out = NULL;
+    if (n) *n = 0;
+    if (!r || !out || !n) return ENGRAM_E_ARG;
+    dim = r->cfg.dim;
+    engram_wbuf_init(&w);
+    engram_wbuf_reserve(&w, 96u + (r->trained ? (size_t)r->C * dim * 4u : 0u) + r->n * (8u + dim * 4u));
+    engram_wbuf_u32(&w, ENGRAM_ROUTER_FILE_VERSION);
+    engram_wbuf_u32(&w, r->cfg.dim);
+    engram_wbuf_u32(&w, r->cfg.nprobe);
+    engram_wbuf_u32(&w, r->cfg.iters);
+    engram_wbuf_u64(&w, (uint64_t)r->cfg.train_max);
+    engram_wbuf_u64(&w, r->cfg.seed);
+    engram_wbuf_u32(&w, r->trained ? 1u : 0u);
+    engram_wbuf_u32(&w, r->C);
+    engram_wbuf_u64(&w, r->adds);
+    engram_wbuf_u64(&w, r->removes);
+    engram_wbuf_u64(&w, r->trains);
+    engram_wbuf_u64(&w, r->searches);
+    engram_wbuf_u64(&w, (uint64_t)r->n);
+    if (r->trained) engram_wbuf_f32s(&w, r->cen, (size_t)r->C * dim);
+    for (i = 0; i < r->n; i++) {
+        engram_wbuf_u64(&w, r->id[i]);
+        engram_wbuf_f32s(&w, r->key + i * dim, dim);
+    }
+    return engram_wbuf_finish(&w, out, n);
+}
+
+engram_rc engram_router_deserialize(engram_router **out, const void *p, size_t n)
+{
+    engram_rbuf rb;
+    engram_router_cfg cfg;
+    engram_router *r = NULL;
+    uint64_t adds, removes, trains, searches, tm, nk;
+    uint32_t ver, trained, C;
+    size_t i, dim, hs, rec;
+    unsigned c;
+    uint32_t *cnt = NULL;
+    engram_rc rc;
+    if (out) *out = NULL;
+    if (!out || (!p && n)) return ENGRAM_E_ARG;
+    engram_rbuf_init(&rb, p, n);
+    ver = engram_rbuf_u32(&rb);
+    if (engram_rbuf_status(&rb) == ENGRAM_OK && ver != ENGRAM_ROUTER_FILE_VERSION)
+        engram_rbuf_fail(&rb, ver == 0u ? ENGRAM_E_FORMAT : ENGRAM_E_VERSION);
+    memset(&cfg, 0, sizeof cfg);
+    cfg.dim = engram_rbuf_u32(&rb);
+    cfg.nprobe = engram_rbuf_u32(&rb);
+    cfg.iters = engram_rbuf_u32(&rb);
+    tm = engram_rbuf_u64(&rb);
+    cfg.train_max = (size_t)tm;
+    if ((uint64_t)cfg.train_max != tm) engram_rbuf_fail(&rb, ENGRAM_E_FORMAT);
+    cfg.seed = engram_rbuf_u64(&rb);
+    trained = engram_rbuf_u32(&rb);
+    C = engram_rbuf_u32(&rb);
+    adds = engram_rbuf_u64(&rb);
+    removes = engram_rbuf_u64(&rb);
+    trains = engram_rbuf_u64(&rb);
+    searches = engram_rbuf_u64(&rb);
+    nk = engram_rbuf_u64(&rb);
+    if ((rc = engram_rbuf_status(&rb)) != ENGRAM_OK) return rc;
+    if (cfg.dim < 8u || cfg.dim > 4096u || cfg.dim % 8u || !cfg.nprobe || !cfg.iters) return ENGRAM_E_FORMAT;
+    dim = cfg.dim;
+    rec = 8u + dim * 4u;
+    if (trained > 1u || C == 0u || (!trained && C != 1u)) return ENGRAM_E_FORMAT;
+    /* bounded by the bytes that remain, before a byte is allocated for them */
+    if (trained && (size_t)C > engram_rbuf_left(&rb) / (dim * 4u)) return ENGRAM_E_FORMAT;
+    if (nk > (uint64_t)((engram_rbuf_left(&rb) - (trained ? (size_t)C * dim * 4u : 0u)) / rec) ||
+        nk >= 0xFFFFFFFEull) return ENGRAM_E_FORMAT;
+    if (engram_rbuf_left(&rb) != (trained ? (size_t)C * dim * 4u : 0u) + (size_t)nk * rec) return ENGRAM_E_FORMAT;
+
+    rc = engram_router_open(&r, &cfg);
+    if (rc != ENGRAM_OK) return rc == ENGRAM_E_MEM ? rc : ENGRAM_E_FORMAT;
+    rc = ENGRAM_E_MEM;
+    for (hs = 16u; hs < 2u * (size_t)nk; hs *= 2u) {}
+    if (nk > 0u) {
+        r->key = (float *)engram_array((size_t)nk * dim, sizeof *r->key);
+        r->id = (uint64_t *)engram_array((size_t)nk, sizeof *r->id);
+        r->bkt = (uint32_t *)engram_array((size_t)nk, sizeof *r->bkt);
+        r->pos = (uint32_t *)engram_array((size_t)nk, sizeof *r->pos);
+        if (!r->key || !r->id || !r->bkt || !r->pos) goto fail;
+        r->cap_key = (size_t)nk * dim; r->cap_id = r->cap_bkt = r->cap_pos = (size_t)nk;
+        r->hkey = (uint64_t *)engram_calloc(hs, sizeof *r->hkey);
+        r->hval = (uint32_t *)engram_calloc(hs, sizeof *r->hval);
+        if (!r->hkey || !r->hval) goto fail;
+        r->hsize = hs;
+    }
+    if (trained) {
+        engram_bucket *nb = (engram_bucket *)engram_calloc(C, sizeof *nb);
+        r->cen = (float *)engram_array((size_t)C * dim, sizeof *r->cen);
+        if (!nb || !r->cen) { engram_free(nb); goto fail; }
+        engram_buckets_free(r->b, r->C);
+        r->b = nb;
+        r->C = C;
+        r->trained = 1;
+        rc = ENGRAM_E_FORMAT;
+        if (!engram_rbuf_f32s_finite(&rb, r->cen, (size_t)C * dim)) goto fail;
+        for (c = 0; c < C; c++) if (!engram_unit_ok(r->cen + (size_t)c * dim, (unsigned)dim)) goto fail;
+    }
+    rc = ENGRAM_E_FORMAT;
+    for (i = 0; i < (size_t)nk; i++) {
+        uint64_t id = engram_rbuf_u64(&rb);
+        if (!engram_rbuf_f32s_finite(&rb, r->key + i * dim, dim)) goto fail;
+        if (id == 0u || !engram_unit_ok(r->key + i * dim, (unsigned)dim) || engram_hfind(r, id) != (size_t)-1) goto fail;
+        r->id[i] = id;
+        engram_hput(r->hkey, r->hval, r->hsize, id, (uint32_t)i);
+        r->n = i + 1u;
+    }
+    if (engram_rbuf_end(&rb) != ENGRAM_OK) goto fail;
+    /* the buckets: every key to its nearest centroid, in index order */
+    rc = ENGRAM_E_MEM;
+    cnt = (uint32_t *)engram_calloc(r->C, sizeof *cnt);
+    if (!cnt) goto fail;
+    for (i = 0; i < r->n; i++) { r->bkt[i] = engram_nearest(r, r->key + i * dim); cnt[r->bkt[i]]++; }
+    for (c = 0; c < r->C; c++) {
+        size_t cap = (size_t)cnt[c] + cnt[c] / 4u + 4u;
+        if (engram_grow((void **)&r->b[c].a, &r->b[c].cap, cap, sizeof *r->b[c].a) != ENGRAM_OK) goto fail;
+    }
+    for (i = 0; i < r->n; i++) {
+        engram_bucket *B = &r->b[r->bkt[i]];
+        r->pos[i] = (uint32_t)B->len;
+        B->a[B->len++] = (uint32_t)i;
+    }
+    engram_free(cnt);
+    r->adds = adds; r->removes = removes; r->trains = trains; r->searches = searches;
+    *out = r;
+    return ENGRAM_OK;
+fail:
+    engram_free(cnt);
+    engram_router_close(r);
+    return rc;
+}
+
+engram_rc engram_router_save(const engram_router *r, const char *path, const engram_key *key)
+{
+    uint8_t *p = NULL;
+    size_t pn = 0;
+    engram_rc rc;
+    if (!r || !path) return ENGRAM_E_ARG;
+    rc = engram_router_serialize(r, &p, &pn);
+    if (rc != ENGRAM_OK) return rc;
+    rc = engram_seal_write(path, ENGRAM_KIND_ROUTER, key, p, pn);
+    engram_wipe(p, pn);
+    engram_free(p);
+    return rc;
+}
+
+engram_rc engram_router_load(engram_router **out, const char *path, const engram_key *key)
+{
+    uint8_t *p = NULL;
+    size_t pn = 0;
+    engram_rc rc;
+    if (out) *out = NULL;
+    if (!out || !path) return ENGRAM_E_ARG;
+    rc = engram_seal_read(path, ENGRAM_KIND_ROUTER, key, &p, &pn);
+    if (rc != ENGRAM_OK) return rc;
+    rc = engram_router_deserialize(out, p, pn);
+    engram_wipe(p, pn);
+    engram_free(p);
+    return rc;
 }
