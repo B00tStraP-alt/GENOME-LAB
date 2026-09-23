@@ -1,0 +1,12 @@
+  control fanin=0    own text first 1.0000   own text + 2 typos first 1.0000   (300 chunks)
+  control fanin=16   own text first 1.0000   own text + 2 typos first 1.0000   (300 chunks)
+  control fanin=64   own text first 1.0000   own text + 2 typos first 1.0000   (300 chunks)
+  control fanin=256  own text first 1.0000   own text + 2 typos first 1.0000   (300 chunks)
+N=21811 dev, 3600 cues (ties at the C-th place count as inside -- generous to every method)
+  candidate recall @          C=10    C=50    C=200   first
+  signature (the store)       0.9900  0.9953  0.9983
+  dense 512                   0.8883  0.9436  0.9706  0.7572
+  sparse E=2048 K=32 fanin=0  0.1808  0.2842  0.4489  0.0189   rescues 1 of the 17 the signature's top 50 missed
+  sparse E=2048 K=32 fanin=16  0.2206  0.3500  0.5314  0.0408   rescues 0 of the 17 the signature's top 50 missed
+  sparse E=2048 K=32 fanin=64  0.2092  0.3033  0.4975  0.0297   rescues 2 of the 17 the signature's top 50 missed
+  sparse E=2048 K=32 fanin=256  0.2044  0.3028  0.4753  0.0303   rescues 0 of the 17 the signature's top 50 missed

@@ -43,6 +43,7 @@ ranked wrongly: exhaustive exact search, 0.911, was worse than a 10-candidate ca
 | `preregistered.txt` | — | the rule, written down before TEST was run |
 | TEST (`results/*_test_*`) | confirmation, once | fragments +40 −1 paired, control +0 −1 (one ambiguous 3-word cue, examined by hand) |
 | `e2e.c` | through the real store API, on a protocol never seen | see below |
+| `sparse.c` | the plan's expand-then-sparsify codes (E = 2048, K = 32, fan-in 0 / 16 / 64 / 256) as a candidate stage | source in the top 50 for 0.28–0.35 of cues (signature 0.995, dense 0.944); a chunk's own text and its 2-typo copy find it first every time (positive control). Not built: W-P1.3-15 |
 
 ## End to end (`e2e.c`)
 

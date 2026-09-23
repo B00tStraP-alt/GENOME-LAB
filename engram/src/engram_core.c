@@ -113,9 +113,6 @@ engram_rc engram_build_info_get(engram_build_info *out)
     out->minor     = ENGRAM_VER_MINOR;
     out->patch     = ENGRAM_VER_PATCH;
     out->d         = ENGRAM_D;
-    out->epi_e     = ENGRAM_EPI_E;
-    out->epi_k     = ENGRAM_EPI_K;
-    out->epi_fanin = ENGRAM_EPI_FANIN;
     out->epi_tail  = ENGRAM_EPI_TAIL;
     out->string    = ENGRAM_VER_STRING;
     out->platform  = ENGRAM_PLATFORM;

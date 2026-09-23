@@ -97,56 +97,30 @@ extern "C" {
 #define ENGRAM_D 512u
 #endif
 
-/* ---- THE EPISODIC EXPANSION ------------------------------------------------------------------
- * EXPAND, THEN SPARSIFY, and the order is the whole mechanism.
+/* ---- EXPAND-THEN-SPARSIFY: MEASURED, AND NOT BUILT (P1.3, ledger W-P1.3-15) ---------------------
+ * The plan called for the episodic store to match SPARSE CODES: the dense vector projected through a
+ * fixed pseudo-random +-1 matrix to E = 4D outputs, the K = 32 largest kept (accidental overlap
+ * K*K/E = half a dimension), and a FAN-IN dial trading separation (each output reads all D inputs)
+ * against completion (each reads F). It was built in the lab and measured before any of it entered
+ * the store (research/p13_ranking/sparse.c, 21,811 episodes, 3,600 fragment cues):
  *
- * Taking the K largest dimensions of an embedding DIRECTLY does not work, and the failure is
- * instructive: an embedding is a structured vector whose magnitude concentrates in dimensions that
- * are large for structural reasons, so "the K largest" is very nearly a constant set and different
- * episodes receive nearly identical codes. The symptom is a cue matching PERFECTLY against the
- * WRONG episode -- similarity 1.0000 and the wrong answer, which is worse than a miss because it is
- * confident.
+ *      candidate recall of the source      top 10   top 50   top 200
+ *      signature (what the store uses)     0.990    0.995    0.998
+ *      dense vector, D = 512               0.888    0.944    0.971
+ *      sparse code, fan-in 0 / 16 / 64     0.18-0.22  0.28-0.35  0.45-0.53
  *
- * So the vector is projected into a higher dimension through a fixed pseudo-random +-1 matrix
- * first -- every output is a signed sum of many inputs, so which ones win depends on the WHOLE
- * vector -- and only then sparsified.
- *
- * THE ARITHMETIC. Two random K-of-E codes share on average K*K/E dimensions:
- *
- *      K=32, E=2048    32*32/2048 = 0.50 dimensions of accidental overlap
- *      K=32, E=512     32*32/512  = 2.00              -- four times worse
- *      K=16, E=512     16*16/512  = 0.50              -- same overlap, half the signal
- *
- * E is held at four times D so the ratio is a property of the design rather than of whichever D was
- * chosen, and K keeps accidental overlap at half a dimension. */
-#ifndef ENGRAM_EPI_E
-#define ENGRAM_EPI_E (ENGRAM_D * 4u)
-#endif
-#ifndef ENGRAM_EPI_K
-#define ENGRAM_EPI_K 32u
-#endif
-
-/* ---- THE FAN-IN, AND THE TRADE IT CONTROLS ----------------------------------------------------
- * How many of the D input dimensions each expanded output reads.
- *
- * At 0 an output reads ALL of them: superb separation, poor completion, because masking any input
- * perturbs every output, so a DEGRADED cue -- half a sentence, a misremembered phrase -- moves every
- * dimension a little and wins a different set.
- *
- * At F < D an output reads exactly F, so roughly (1 - m/D)^F of the outputs survive a cue masked at
- * m dimensions BIT-EXACTLY, and the degraded cue's winners are drawn largely from the same survivors
- * that won when it was stored.
- *
- * Separation and completion are the two ends of ONE dial. The default is 0 because separation is
- * what a store is for; moving it is a decision with a measurement attached, made in P1.3. */
-#ifndef ENGRAM_EPI_FANIN
-#define ENGRAM_EPI_FANIN 0u
-#endif
+ * and as a positive control, a chunk's OWN text -- and its text with two typos -- found it first
+ * every time at every fan-in. The code does exactly what it was designed to do: it recognises a
+ * near-copy. A fragment is not a near-copy: its dense vector keeps a fraction of the source's mass,
+ * and the top-K of the expansion amplifies that difference into different winners. The fan-in dial
+ * moves 0.28 to 0.35. It rescued at most 2 of the 17 cues the signature's top 50 missed. Nothing in
+ * the store matches sparse codes, so there are no E, K or fan-in constants to configure. */
 
 /* ---- HOW MUCH TEXT AN EPISODE CARRIES ---------------------------------------------------------
- * The store holds a sparse CODE and a bounded verbatim TAIL. The code is what is matched; the tail is
- * what a human reads back. Bounded, because an unbounded tail makes the store a second copy of the
- * corpus, and the thing that must stay cheap here is the match. */
+ * An episode is at most this many bytes of verbatim text (engram_chunk.h cuts longer text), and it is
+ * matched through its 1 KB signature and, for the few candidates that survive, its text. Bounded,
+ * because a signature saturates on long text (P1.2) and the exact and alignment stages cost in
+ * proportion to the episode. */
 #ifndef ENGRAM_EPI_TAIL
 #define ENGRAM_EPI_TAIL 480u
 #endif
@@ -158,11 +132,6 @@ extern "C" {
 
 ENGRAM_STATIC_ASSERT(ENGRAM_D % 8u == 0u,                d_multiple_of_8);
 ENGRAM_STATIC_ASSERT(ENGRAM_D >= 64u,                    d_at_least_64);
-ENGRAM_STATIC_ASSERT(ENGRAM_EPI_E >= ENGRAM_D,           expansion_not_smaller);
-ENGRAM_STATIC_ASSERT(ENGRAM_EPI_K >= 4u,                 k_at_least_4);
-ENGRAM_STATIC_ASSERT(ENGRAM_EPI_K <= ENGRAM_EPI_E / 8u,  k_is_sparse);
-ENGRAM_STATIC_ASSERT(ENGRAM_EPI_E <= 65535u,             e_fits_in_u16_index);
-ENGRAM_STATIC_ASSERT(ENGRAM_EPI_FANIN <= ENGRAM_D,       fanin_within_d);
 ENGRAM_STATIC_ASSERT(sizeof(float) == 4u,                float_is_32bit);
 ENGRAM_STATIC_ASSERT(sizeof(double) == 8u,               double_is_64bit);
 ENGRAM_STATIC_ASSERT(sizeof(uint64_t) == 8u,             u64_is_64bit);
@@ -231,7 +200,7 @@ uint64_t engram_hash_bytes(const void *p, size_t n, uint64_t seed);
 /* ---- VERSION REPORTING ----------------------------------------------------------------------- */
 typedef struct {
     unsigned    major, minor, patch;
-    unsigned    d, epi_e, epi_k, epi_fanin, epi_tail;   /* the geometry this build was compiled at */
+    unsigned    d, epi_tail;                            /* the geometry this build was compiled at */
     const char *string;
     const char *platform;                                /* "linux-x86_64", "windows-x86_64", ... */
     const char *compiler;
