@@ -9,9 +9,10 @@
  * THE ADD, IN FOUR STEPS, AND WHY THE COMMIT CANNOT FAIL
  *   1. MEASURE  cut the text and sign every chunk into a stack buffer: how many chunks are storable
  *               and how many bytes they carry. Nothing allocated, nothing changed.
- *   2. PLAN     how many consolidated episodes must go to make room, as a prefix of slots [0, stop).
- *               Not enough: ENGRAM_E_FULL, nothing changed.
- *   3. RESERVE  compact if that alone makes room (allocation-free, logically invisible), else grow
+ *   2. PLAN     which consolidated episodes must go to make room: THE EVICTION ORDER below, as a
+ *               recall threshold and a count. Not enough: ENGRAM_E_FULL, nothing changed.
+ *   3. RESERVE  compact if that alone makes room (allocation-free, logically invisible -- and it keeps
+ *               slot order and recall counts, so the plan still names the same episodes), else grow
  *               every array. A failed growth leaves each array's CONTENT as it was.
  *   4. WRITE, THEN COMMIT  new episodes are written into slots at and beyond n -- invisible, because
  *               everything reads only [0, n). Then the planned evictions are applied and n, the byte
@@ -57,6 +58,72 @@ struct engram_store {
     size_t           amax_d, amax_q;       /* alignment capacity: episode, cue (codepoints) */
     uint32_t        *acue, *atext, *awork, *ahist;
 };
+
+/* ---- THE EVICTION ORDER ---------------------------------------------------------------------
+ * Among live CONSOLIDATED episodes (an unconsolidated one exists nowhere else and is never evicted):
+ * the FEWEST RECALLS first, then the OLDEST. The plan is (r, take): every candidate recalled fewer
+ * than r times, then the first `take` in slot order recalled exactly r times -- the shortest prefix of
+ * that order that frees enough slots AND bytes. It is found without allocating: one pass fills a
+ * histogram of recall counts 0..62 (63 collects the rest); only when the threshold lies in that last
+ * bucket -- every cheaper candidate spent and the rest recalled 63+ times -- does a binary search over
+ * the counts run. The commit re-applies the same rule; nothing between plan and commit changes it. */
+typedef struct { uint32_t r; size_t take; int any; } engram_evict_plan;
+
+#define ENGRAM_EVICT_BUCKETS 64u
+
+static int engram_evictable(const engram_store *s, size_t slot)
+{
+    return (s->flags[slot] & (ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED)) ==
+           (ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED);
+}
+
+/* slots and bytes of the evictable episodes recalled at most r times */
+static void engram_evict_tally(const engram_store *s, uint32_t r, size_t *slots, size_t *bytes)
+{
+    size_t i;
+    *slots = 0; *bytes = 0;
+    for (i = 0; i < s->n; i++)
+        if (engram_evictable(s, i) && s->recalls[i] <= r) { (*slots)++; *bytes += s->len[i]; }
+}
+
+static int engram_evict_plan_make(const engram_store *s, size_t need_slots, size_t need_bytes,
+                                  engram_evict_plan *p)
+{
+    size_t hs[ENGRAM_EVICT_BUCKETS], hb[ENGRAM_EVICT_BUCKETS], fs = 0, fb = 0, i;
+    uint32_t r = 0, b, maxr = 0;
+    p->r = 0; p->take = 0; p->any = need_slots > 0u || need_bytes > 0u;
+    if (!p->any) return 1;
+    memset(hs, 0, sizeof hs); memset(hb, 0, sizeof hb);
+    for (i = 0; i < s->n; i++)
+        if (engram_evictable(s, i)) {
+            uint32_t rc = s->recalls[i];
+            b = rc < ENGRAM_EVICT_BUCKETS - 1u ? rc : ENGRAM_EVICT_BUCKETS - 1u;
+            hs[b]++; hb[b] += s->len[i];
+            if (rc > maxr) maxr = rc;
+        }
+    for (b = 0; b < ENGRAM_EVICT_BUCKETS; b++) {      /* the smallest r whose "<= r" set suffices */
+        if (fs + hs[b] >= need_slots && fb + hb[b] >= need_bytes) break;
+        fs += hs[b]; fb += hb[b];
+    }
+    if (b == ENGRAM_EVICT_BUCKETS) return 0;          /* even every candidate is not enough */
+    r = b;
+    if (b == ENGRAM_EVICT_BUCKETS - 1u) {             /* inside the 63+ bucket: search the counts */
+        uint32_t lo = b, hi = maxr;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2u;
+            size_t ts, tb;
+            engram_evict_tally(s, mid, &ts, &tb);
+            if (ts >= need_slots && tb >= need_bytes) hi = mid; else lo = mid + 1u;
+        }
+        r = lo;
+        if (r > 0u) engram_evict_tally(s, r - 1u, &fs, &fb); else { fs = 0; fb = 0; }
+    }
+    for (i = 0; i < s->n && (fs < need_slots || fb < need_bytes); i++)   /* then the oldest at r */
+        if (engram_evictable(s, i) && s->recalls[i] == r) { fs++; fb += s->len[i]; p->take++; }
+    p->r = r;
+    return 1;
+}
+
 
 void engram_store_cfg_default(engram_store_cfg *cfg)
 {
@@ -180,7 +247,8 @@ engram_rc engram_store_add(engram_store *s, const void *text, size_t n, uint64_t
 {
     uint64_t tmp[ENGRAM_SIG_WORDS];
     engram_chunkit it;
-    size_t off, len, k = 0, bytes = 0, stop = 0, freed_slots = 0, freed_bytes = 0, slot;
+    size_t off, len, k = 0, bytes = 0, slot;
+    engram_evict_plan plan;
     engram_rc rc, last = ENGRAM_E_SHORT;
 
     if (first_id) *first_id = 0;
@@ -198,25 +266,18 @@ engram_rc engram_store_add(engram_store *s, const void *text, size_t n, uint64_t
     }
     if (k == 0) return last;
 
-    /* 2. PLAN: evict the oldest consolidated live episodes, as a prefix of slots [0, stop) */
+    /* 2. PLAN: THE EVICTION ORDER */
     if (k > s->cfg.max_episodes || bytes > s->cfg.max_text_bytes) { s->refusals++; return ENGRAM_E_FULL; }
     {
         size_t need_slots = s->live + k > s->cfg.max_episodes ? s->live + k - s->cfg.max_episodes : 0u;
         size_t need_bytes = s->live_bytes + bytes > s->cfg.max_text_bytes
                                 ? s->live_bytes + bytes - s->cfg.max_text_bytes : 0u;
-        for (stop = 0; stop < s->n && (freed_slots < need_slots || freed_bytes < need_bytes); stop++)
-            if ((s->flags[stop] & (ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED)) ==
-                (ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED)) {
-                freed_slots++;
-                freed_bytes += s->len[stop];
-            }
-        if (freed_slots < need_slots || freed_bytes < need_bytes) { s->refusals++; return ENGRAM_E_FULL; }
+        if (!engram_evict_plan_make(s, need_slots, need_bytes, &plan)) { s->refusals++; return ENGRAM_E_FULL; }
     }
 
-    /* 3. RESERVE. Compaction is logically invisible, so it may run before a later failure. It would
-     * move slots, and the eviction plan is a slot prefix -- so compact only when nothing is to be
-     * evicted in this add. */
-    if (stop == 0 && s->n > s->live &&
+    /* 3. RESERVE. Compaction is logically invisible, so it may run before a later failure; it keeps
+     * slot order and recall counts, so the plan still names the same episodes afterwards. */
+    if (s->n > s->live &&
         (s->n + k > s->cap_id || s->text_used + bytes + 1u > s->text_cap))
         engram_store_compact(s);
     rc = engram_store_reserve(s, k, bytes);
@@ -243,9 +304,10 @@ engram_rc engram_store_add(engram_store *s, const void *text, size_t n, uint64_t
             w++;
         }
         /* commit */
-        for (slot = 0; slot < stop; slot++)
-            if ((s->flags[slot] & (ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED)) ==
-                (ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED)) {
+        for (slot = 0; plan.any && slot < s->n; slot++)
+            if (engram_evictable(s, slot) &&
+                (s->recalls[slot] < plan.r || (s->recalls[slot] == plan.r && plan.take > 0u))) {
+                if (s->recalls[slot] == plan.r) plan.take--;
                 s->flags[slot] &= ~(uint32_t)(ENGRAM_EPI_LIVE | ENGRAM_EPI_CONSOLIDATED);
                 memset(s->sig + slot * ENGRAM_SIG_WORDS, 0, ENGRAM_SIG_WORDS * sizeof *s->sig);
                 s->live--;

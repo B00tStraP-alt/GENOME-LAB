@@ -92,8 +92,7 @@ static void test_build_info(void)
     ET_EQ_U64(bi.major, ENGRAM_VER_MAJOR);
     ET_EQ_U64(bi.minor, ENGRAM_VER_MINOR);
     ET_EQ_U64(bi.d, ENGRAM_D);
-    ET_EQ_U64(bi.epi_e, ENGRAM_EPI_E);
-    ET_EQ_U64(bi.epi_k, ENGRAM_EPI_K);
+    ET_EQ_U64(bi.epi_tail, ENGRAM_EPI_TAIL);
     ET_STREQ(bi.string, ENGRAM_VER_STRING);
     ET_CHECK(bi.platform && bi.platform[0]);
     ET_CHECK(bi.compiler && bi.compiler[0]);

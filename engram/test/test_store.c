@@ -312,7 +312,8 @@ static void test_lifecycle(void)
     engram_store_stats_get(s, &st);
     ET_EQ_U64(st.refusals, 1u);
 
-    ET_SECTION("S5: eviction takes the OLDEST CONSOLIDATED, and only as many as needed");
+    ET_SECTION("S5: eviction takes CONSOLIDATED episodes only, least recalled first (oldest among equals),"
+               " and only as many as needed");
     ET_OK(engram_store_consolidated(s, 7u));
     ET_OK(engram_store_consolidated(s, 3u));
     ET_OK(engram_store_consolidated(s, 9u));
@@ -324,16 +325,95 @@ static void test_lifecycle(void)
     engram_store_stats_get(s, &st);
     ET_EQ_U64(st.evictions, 1u);
     ET_EQ_U64(st.live, 10u);
+    {   /* recall episode 7 by its own text: now it is the MORE recalled, so 9 goes before it */
+        char own[ENGRAM_EPI_TAIL];
+        size_t olen;
+        ET_OK(engram_store_get(s, 7u, &ep));
+        olen = ep.len; memcpy(own, ep.text, olen);
+        ET_OK(engram_store_recall(s, own, olen, h, 8u, &nh));
+        ET_CHECK(nh > 0u && h[0].id == 7u);
+        ET_OK(engram_store_get(s, 7u, &ep));
+        ET_EQ_U64(ep.recalls, 1u);
+    }
     ET_OK(engram_store_add(s, L.line[11], L.len[11], 11u, 0u, &first, &nadd));
-    ET_RC(engram_store_get(s, 7u, &ep), ENGRAM_E_NOTFOUND);
+    ET_RC(engram_store_get(s, 9u, &ep), ENGRAM_E_NOTFOUND);            /* 0 recalls, younger than 3 */
+    ET_OK(engram_store_get(s, 7u, &ep));                                /* 1 recall: kept */
     ET_OK(engram_store_add(s, L.line[12], L.len[12], 12u, 0u, &first, &nadd));
-    ET_RC(engram_store_get(s, 9u, &ep), ENGRAM_E_NOTFOUND);
+    ET_RC(engram_store_get(s, 7u, &ep), ENGRAM_E_NOTFOUND);            /* the last consolidated one */
     ET_RC(engram_store_add(s, L.line[13], L.len[13], 13u, 0u, &first, &nadd), ENGRAM_E_FULL);
     for (i = 1; i <= 10u; i++)                              /* every unconsolidated original survives */
         if (i != 3u && i != 7u && i != 9u) ET_OK(engram_store_get(s, (uint64_t)i, &ep));
     engram_store_close(s);
 
-    ET_SECTION("S5: the text-byte cap is enforced the same way");
+    ET_SECTION("S5: recall counts past the histogram (63+) -- the least recalled still goes first");
+    s = open_small(4u, 1u << 20);
+    if (!s) { ET_CHECK(0); engram_free(L.buf); return; }
+    {
+        static const unsigned want[4] = { 70u, 65u, 80u, 66u };   /* episode 2 is the least recalled */
+        unsigned e, r;
+        for (i = 0; i < 4u; i++) ET_OK(engram_store_add(s, L.line[i], L.len[i], i, 0u, &first, &nadd));
+        for (e = 0; e < 4u; e++) {
+            char own[ENGRAM_EPI_TAIL];
+            size_t olen;
+            ET_OK(engram_store_get(s, e + 1u, &ep));
+            olen = ep.len; memcpy(own, ep.text, olen);
+            for (r = 0; r < want[e]; r++) (void)engram_store_recall(s, own, olen, h, 1u, &nh);
+            ET_OK(engram_store_get(s, e + 1u, &ep));
+            ET_EQ_U64(ep.recalls, want[e]);
+            ET_OK(engram_store_consolidated(s, e + 1u));
+        }
+        ET_OK(engram_store_add(s, L.line[4], L.len[4], 4u, 0u, &first, &nadd));
+        ET_RC(engram_store_get(s, 2u, &ep), ENGRAM_E_NOTFOUND);
+        for (e = 1; e <= 4u; e++) if (e != 2u) ET_OK(engram_store_get(s, e, &ep));
+        ET_OK(engram_store_add(s, L.line[5], L.len[5], 5u, 0u, &first, &nadd));
+        ET_RC(engram_store_get(s, 4u, &ep), ENGRAM_E_NOTFOUND);        /* 66: next least recalled */
+    }
+    engram_store_close(s);
+
+    ET_SECTION("S5: the text-byte cap is enforced the same way -- a big text takes the least recalled, as many as needed");
+    s = open_small(1000u, 1000u);
+    if (!s) { ET_CHECK(0); engram_free(L.buf); return; }
+    {
+        char ep_text[11][120], big[170];                /* a word may overshoot the length by 4 */
+        uint64_t e;
+        size_t m;
+        for (e = 0; e < 11u; e++) {                     /* ten 100-byte episodes, and a 150-byte text */
+            char *t = e < 10u ? ep_text[e] : big;
+            size_t want = e < 10u ? 100u : 150u, w = 0;
+            unsigned k = 0;
+            while (w < want) {                          /* distinct words per episode: e and k spelled */
+                if (w) t[w++] = ' ';
+                t[w++] = (char)('a' + (e * 7u + k) % 26u); t[w++] = (char)('a' + (e * 3u + k * 5u) % 26u);
+                t[w++] = (char)('a' + (k * 11u + e) % 26u); t[w++] = (char)('a' + (e + k) % 26u);
+                k++;
+            }
+            t[want - 1u] = 'z';                         /* no trailing space: the episode is exactly want */
+            t[want] = 0;
+        }
+        for (e = 0; e < 10u; e++) {
+            ET_OK(engram_store_add(s, ep_text[e], 100u, e, 0u, &first, &nadd));
+            ET_EQ_U64(nadd, 1u);
+        }
+        engram_store_stats_get(s, &st);
+        ET_EQ_U64(st.text_bytes, 1000u);
+        for (e = 1; e <= 10u; e++) ET_OK(engram_store_consolidated(s, e));
+        for (e = 1; e <= 10u; e++) {                    /* recall every episode but 2 and 3 */
+            if (e == 2u || e == 3u) continue;
+            ET_OK(engram_store_recall(s, ep_text[e - 1u], 100u, h, 1u, &nh));
+            ET_CHECK(nh == 1u && h[0].id == e);
+        }
+        m = strlen(big);
+        ET_OK(engram_store_add(s, big, m, 99u, 0u, &first, &nadd));   /* needs 150: two go, not one */
+        ET_RC(engram_store_get(s, 2u, &ep), ENGRAM_E_NOTFOUND);
+        ET_RC(engram_store_get(s, 3u, &ep), ENGRAM_E_NOTFOUND);
+        for (e = 1; e <= 10u; e++) if (e != 2u && e != 3u) ET_OK(engram_store_get(s, e, &ep));
+        engram_store_stats_get(s, &st);
+        ET_EQ_U64(st.evictions, 2u);
+        ET_EQ_U64(st.text_bytes, 950u);
+    }
+    engram_store_close(s);
+
+    ET_SECTION("S5: the text-byte cap refuses when nothing is consolidated");
     s = open_small(1000u, 2000u);
     if (!s) { ET_CHECK(0); engram_free(L.buf); return; }
     {

@@ -16,8 +16,9 @@
  *                    and compares the store's fingerprint before and after.
  *   IDS              64-bit, strictly increasing, never reused, never 0, never renumbered -- not even by
  *                    compaction. An id names one episode forever; a deleted id stays deleted.
- *   CAPACITY         hard caps on episodes and on text bytes. A full store EVICTS its oldest
- *                    CONSOLIDATED episode; if no episode is consolidated it REFUSES the add
+ *   CAPACITY         hard caps on episodes and on text bytes. A full store EVICTS CONSOLIDATED
+ *                    episodes -- the least recalled first, the oldest among equals, and only as many
+ *                    as the new text needs; if too few are consolidated it REFUSES the add
  *                    (ENGRAM_E_FULL). It never silently drops a memory that exists nowhere else.
  *   DETERMINISM      the same sequence of calls produces the same fingerprint and the same recall
  *                    results on every platform (R5). The store reads no clock: times are arguments.
