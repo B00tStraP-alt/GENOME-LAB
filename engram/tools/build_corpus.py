@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""
+build_corpus.py -- freeze the encoder's proof corpus from public-domain Project Gutenberg texts.
+
+WHY REAL TEXT, AND WHY FROZEN.
+A vectoriser tuned on synthetic text is tuned on its generator's quirks. Real books bring what a
+generator never does: uneven paragraph lengths, dialogue next to description, archaic spellings,
+names, numbers and the long tail of punctuation. The corpus is FROZEN IN THE TREE with a SHA-256 per
+file, because VECTRA TRACE measured its encoder against its own source code -- which changed whenever
+the code changed, and moved a calibration result twice without anyone touching the encoder.
+
+Selection is deterministic: paragraphs are filtered by length, then every k-th is kept, so the same
+sources always produce the same bytes. The texts are public domain in the USA; the Project Gutenberg
+header and footer (which carry the trademark licence, not the work) are stripped.
+
+TWO DEFECTS THIS FILE ONCE HAD, kept here so they are not reintroduced:
+  1. Chinese Gutenberg texts are HARD-WRAPPED at about forty characters. Splitting on newlines gave
+     line fragments, and a length filter then rejected nearly all of them. Paragraphs are now
+     assembled from indent markers, and continuation lines are joined with NO separator -- Chinese has
+     no inter-word spaces, so joining with one would plant a false word boundary at every line break.
+  2. Older files carry a legacy footer ("End of Project Gutenberg's ...") BEFORE the "*** END" marker,
+     so it fell inside the body. Being long ASCII, it passed the length filter and became the only
+     "paragraph" extracted from a 1.8 MB novel.
+
+Usage:  build_corpus.py <dir-with-pgNNNN.txt> <out-dir>
+"""
+import hashlib
+import os
+import re
+import sys
+
+SOURCES = {
+    # id: (language, title, min chars, max chars, paragraphs to keep)
+    1342:  ("en", "Pride and Prejudice",                            180, 1100, 260),
+    84:    ("en", "Frankenstein",                                   180, 1100, 220),
+    11:    ("en", "Alice's Adventures in Wonderland",               160, 1100, 160),
+    1661:  ("en", "The Adventures of Sherlock Holmes",              180, 1100, 220),
+    14155: ("fr", "Madame Bovary",                                  180, 1100, 220),
+    22367: ("de", "Die Verwandlung",                                180, 1100, 120),
+    2229:  ("de", "Faust: Der Tragodie erster Teil",                120, 1100, 100),
+    13371: ("sv", "Folkungatradet",                                 180, 1100, 140),
+    23950: ("zh", "San Guo Zhi Yan Yi (Romance of Three Kingdoms)",  60,  600, 160),
+    24264: ("zh", "Hong Lou Meng (Dream of the Red Chamber)",        60,  600, 160),
+}
+
+START = re.compile(r"\*\*\* ?START OF (THE|THIS) PROJECT GUTENBERG EBOOK.*?\*\*\*", re.S | re.I)
+END = re.compile(r"\*\*\* ?END OF (THE|THIS) PROJECT GUTENBERG EBOOK", re.I)
+LEGACY_FOOTER = re.compile(r"^\s*End of (the )?Project Gutenberg", re.I | re.M)
+IDEOGRAPHIC_SPACE = "　"
+
+
+def body(text):
+    m = START.search(text)
+    e = END.search(text)
+    if not m or not e:
+        raise SystemExit("no Gutenberg START/END markers")
+    b = text[m.end():e.start()]
+    f = LEGACY_FOOTER.search(b)
+    return b[:f.start()] if f else b
+
+
+def paragraphs_zh(text):
+    out, cur = [], []
+    for line in text.split("\n"):
+        if not line.strip():
+            if cur:
+                out.append("".join(cur))
+                cur = []
+            continue
+        if line.startswith(IDEOGRAPHIC_SPACE) and cur:
+            out.append("".join(cur))
+            cur = []
+        cur.append(line.strip().strip(IDEOGRAPHIC_SPACE).strip())
+    if cur:
+        out.append("".join(cur))
+    return out
+
+
+def paragraphs(text, lang):
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if lang == "zh":
+        parts = paragraphs_zh(text)
+    else:
+        parts = [re.sub(r"\s+", " ", p).strip() for p in re.split(r"\n\s*\n", text)]
+    return [p for p in parts if p]
+
+
+def acceptable(p):
+    # Chapter headings, contents lines and illustration captions: bracketed, or short and all-caps.
+    if p.startswith("[") or (p.isupper() and len(p) < 200):
+        return False
+    # Rules and separators ("-----", "*****") are not prose in any language.
+    if re.fullmatch(r"[\s\-*=_.~]+", p):
+        return False
+    return True
+
+
+def main(src_dir, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    by_lang, manifest = {}, []
+    for pid, (lang, title, lo, hi, keep) in SOURCES.items():
+        raw = open(os.path.join(src_dir, "pg%d.txt" % pid), encoding="utf-8").read()
+        paras = [p for p in paragraphs(body(raw), lang) if lo <= len(p) <= hi and acceptable(p)]
+        step = max(1, len(paras) // keep)
+        chosen = paras[::step][:keep]
+        by_lang.setdefault(lang, []).extend(chosen)
+        manifest.append("  PG %-5d %-2s %-48s %4d of %5d paragraphs"
+                        % (pid, lang, title, len(chosen), len(paras)))
+    lines = ["# ENGRAM encoder proof corpus -- generated by tools/build_corpus.py. DO NOT EDIT.", ""]
+    lines += manifest + [""]
+    for lang in sorted(by_lang):
+        data = "\n".join(by_lang[lang]) + "\n"
+        raw = data.encode("utf-8")
+        path = os.path.join(out_dir, "corpus_%s.txt" % lang)
+        with open(path, "wb") as f:
+            f.write(raw)
+        lines.append("  corpus_%s.txt  %4d paragraphs  %7d bytes  sha256 %s"
+                     % (lang, len(by_lang[lang]), len(raw), hashlib.sha256(raw).hexdigest()))
+    with open(os.path.join(out_dir, "MANIFEST.txt"), "w", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+    print("\n".join(lines))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1], sys.argv[2])

@@ -1,0 +1,10 @@
+fp32 mnist 3e-3
+bitnet mnist 1e-3
+cascade mnist 1
+cascade16 mnist 1
+cascade64 mnist 3
+fp32 fashion 1e-3
+bitnet fashion 1e-3
+cascade fashion 0.1
+cascade16 fashion 1
+cascade64 fashion 1

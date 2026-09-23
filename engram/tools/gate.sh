@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# ==================================================================================================
+# tools/gate.sh -- THE PHASE GATE.
+#
+# A phase is not done until this exits 0. It runs every build variant and every suite, and before it
+# trusts any of them it proves it CAN fail (rule R6): a build with a deliberately failing check is run,
+# and the gate aborts if that build is reported as passing -- because a gate that cannot fail would
+# report every later phase as done regardless of what it contained.
+#
+# Every step is judged on the real exit code of the real command. No step is judged on text output
+# alone; the one text check (step 0) is an ADDITIONAL requirement, never a substitute.
+# ==================================================================================================
+set -u
+cd "$(dirname "$0")/.."
+
+LOG_DIR=build/gate
+mkdir -p "$LOG_DIR"
+fail=0
+declare -a SUMMARY
+
+step() { printf '\n##### %s\n' "$1"; }
+
+run() {
+    local name=$1; shift
+    local log="$LOG_DIR/$(echo "$name" | tr ' /+' '___').log"
+    if "$@" >"$log" 2>&1; then
+        SUMMARY+=("  PASS  $name")
+        echo "  PASS  $name"
+    else
+        SUMMARY+=("  FAIL  $name   (see $log)")
+        echo "  FAIL  $name   -- last lines of $log:"
+        tail -25 "$log" | sed 's/^/        /'
+        fail=1
+    fi
+}
+
+step "0. the gate can fail (R6)"
+if ! make -s plant >"$LOG_DIR/plant_build.log" 2>&1; then
+    echo "  GATE BROKEN: the planted-defect build did not even compile"; cat "$LOG_DIR/plant_build.log"; exit 3
+fi
+( cd build/plant && ./test_core ) >"$LOG_DIR/plant_run.log" 2>&1
+plant_rc=$?
+if [ "$plant_rc" -eq 0 ]; then
+    echo "  GATE BROKEN: a build containing a failing check exited 0"; exit 3
+fi
+if ! grep -q "ENGRAM-GATE-PLANT-EXECUTED" "$LOG_DIR/plant_run.log"; then
+    echo "  GATE BROKEN: the plant exited $plant_rc but its code never ran -- it failed for another reason"
+    tail -20 "$LOG_DIR/plant_run.log"; exit 3
+fi
+echo "  PASS  a planted failure is rejected (exit $plant_rc), and the plant provably executed"
+
+step "1. linux: strict build + suites";           run "linux"            make -s test
+step "2. address + undefined-behaviour sanitizer"; run "asan+ubsan"      make -s asan
+step "3. thread sanitizer";                        run "tsan"            make -s tsan
+step "4. windows: static PE32+ build";             run "windows build"   make -s win
+step "5. windows: suites under wine";              run "windows on wine" make -s wine-test
+
+step "5b. cross-platform identity: Linux (gcc) and Windows (mingw, under Wine) produced the same bits"
+# prints_equal A B: every *PRINT line in log A must appear, with the same value, in log B, and there
+# must be at least one. Proven able to fail before it is trusted (R6).
+prints_equal() {
+    local a b n=0 bad=0 key val other
+    a=$(tr -d '\r' < "$1" | grep -E '^[A-Z]+PRINT [0-9A-F]{16}$' || true)
+    b=$(tr -d '\r' < "$2" | grep -E '^[A-Z]+PRINT [0-9A-F]{16}$' || true)
+    [ -n "$a" ] || { echo "    no prints in $1"; return 1; }
+    while read -r key val; do
+        n=$((n + 1))
+        other=$(printf '%s\n' "$b" | awk -v k="$key" '$1 == k { print $2 }')
+        if [ "$other" != "$val" ]; then echo "    $key: $val vs ${other:-MISSING}"; bad=1; fi
+    done <<< "$a"
+    [ "$bad" -eq 0 ] && echo "    $n prints identical"
+    return $bad
+}
+tmpa="$LOG_DIR/print_selftest_a.log"; tmpb="$LOG_DIR/print_selftest_b.log"
+printf 'FINGERPRINT 0123456789ABCDEF\n' > "$tmpa"
+printf 'FINGERPRINT 0123456789ABCDEE\n' > "$tmpb"
+if prints_equal "$tmpa" "$tmpb" >/dev/null; then echo "  GATE BROKEN: the print comparison accepted different values"; exit 3; fi
+printf 'OTHERPRINT 0123456789ABCDEF\n' > "$tmpb"
+if prints_equal "$tmpa" "$tmpb" >/dev/null; then echo "  GATE BROKEN: the print comparison accepted a missing print"; exit 3; fi
+if prints_equal "$LOG_DIR/linux.log" "$LOG_DIR/windows_on_wine.log"; then
+    echo "  PASS  cross-platform identity"; SUMMARY+=("  PASS  cross-platform identity (FINGERPRINT, SIGPRINT, EXACTPRINT)")
+else
+    echo "  FAIL  cross-platform identity"; SUMMARY+=("  FAIL  cross-platform identity"); fail=1
+fi
+
+step "6. the windows binary depends on system DLLs only"
+bad_dlls=$(x86_64-w64-mingw32-objdump -p build/win/test_core.exe 2>/dev/null | awk '/DLL Name:/{print $3}' \
+           | grep -viE '^(KERNEL32|USER32|ADVAPI32|bcrypt|msvcrt|ntdll|SHELL32|GDI32|COMCTL32|ole32)\.dll$' || true)
+if [ -n "$bad_dlls" ]; then echo "  FAIL  non-system DLL dependency: $bad_dlls"; fail=1; SUMMARY+=("  FAIL  system DLLs only")
+else echo "  PASS  system DLLs only"; SUMMARY+=("  PASS  system DLLs only"); fi
+
+step "7. size of the tree"
+src_loc=$(cat src/*.c src/*.h | wc -l)
+test_loc=$(cat test/*.c test/*.h | wc -l)
+tool_loc=$(cat tools/*.sh tools/*.py 2>/dev/null | wc -l)
+printf '  src %6d   test %6d   tools %6d   total %6d lines\n' "$src_loc" "$test_loc" "$tool_loc" \
+       $((src_loc + test_loc + tool_loc))
+
+step "VERDICT"
+printf '%s\n' "${SUMMARY[@]}"
+if [ "$fail" -ne 0 ]; then echo; echo "GATE: FAIL"; exit 1; fi
+echo; echo "GATE: PASS"
