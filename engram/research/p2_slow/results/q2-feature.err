@@ -1,0 +1,22 @@
+  q2-feature ep 1: train 2.326 dev 2.486 (47s)
+  q2-feature ep 2: train 2.202 dev 2.407 (48s)
+  q2-feature ep 3: train 2.165 dev 2.383 (47s)
+  q2-feature ep 4: train 2.159 dev 2.382 (46s)
+Traceback (most recent call last):
+  File "/home/user/GENOME-LAB/engram/research/p2_slow/expert.py", line 334, in <module>
+    main()
+  File "/home/user/GENOME-LAB/engram/research/p2_slow/expert.py", line 330, in main
+    print(json.dumps(out), flush=True)
+          ^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/json/__init__.py", line 231, in dumps
+    return _default_encoder.encode(obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/json/encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+TypeError: Object of type float32 is not JSON serializable

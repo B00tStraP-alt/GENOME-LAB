@@ -1,0 +1,4 @@
+  q8-const0.3 ep 1: train 1.683 dev 2.087 (195s)
+  q8-const0.3 ep 2: train 1.500 dev 2.077 (164s)
+  q8-const0.3 ep 3: train 1.430 dev 2.106 (161s)
+  q8-const0.3 ep 4: train 1.401 dev 2.125 (164s)

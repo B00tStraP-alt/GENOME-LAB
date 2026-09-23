@@ -1,0 +1,4 @@
+  window-dev ep 1: train 3.301 dev 3.293 (35s)
+  window-dev ep 2: train 3.228 dev 3.229 (34s)
+  window-dev ep 3: train 3.200 dev 3.209 (34s)
+  window-dev ep 4: train 3.197 dev 3.204 (34s)

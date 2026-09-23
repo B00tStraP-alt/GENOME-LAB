@@ -23,7 +23,7 @@ BUILD    := build
 
 LIB_SRC  := $(wildcard $(SRCDIR)/*.c)
 LIB_HDR  := $(wildcard $(SRCDIR)/*.h) $(wildcard $(TESTDIR)/*.h)
-TESTS    := test_core test_text test_enc test_chunk test_align test_store test_router test_crypto test_persist
+TESTS    := test_core test_text test_enc test_chunk test_align test_store test_router test_crypto test_persist test_math test_cascade
 
 WARN := -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wcast-qual \
         -Wstrict-prototypes -Wmissing-prototypes -Wformat=2 -Wundef -Wvla -Wdouble-promotion \

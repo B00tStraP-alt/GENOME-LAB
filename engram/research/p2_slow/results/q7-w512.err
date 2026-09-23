@@ -1,0 +1,4 @@
+  q7-w512 ep 1: train 1.674 dev 2.084 (197s)
+  q7-w512 ep 2: train 1.452 dev 2.044 (194s)
+  q7-w512 ep 3: train 1.367 dev 2.076 (188s)
+  q7-w512 ep 4: train 1.354 dev 2.088 (163s)

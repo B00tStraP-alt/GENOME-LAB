@@ -1,0 +1,4 @@
+  float-dev ep 1: train 1.734 dev 2.088 (38s)
+  float-dev ep 2: train 1.474 dev 2.018 (30s)
+  float-dev ep 3: train 1.314 dev 2.055 (32s)
+  float-dev ep 4: train 1.238 dev 2.081 (31s)

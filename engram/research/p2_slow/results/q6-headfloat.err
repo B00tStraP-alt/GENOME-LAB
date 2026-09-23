@@ -1,0 +1,4 @@
+  q6-headfloat ep 1: train 1.674 dev 2.065 (67s)
+  q6-headfloat ep 2: train 1.450 dev 2.043 (66s)
+  q6-headfloat ep 3: train 1.346 dev 2.093 (66s)
+  q6-headfloat ep 4: train 1.328 dev 2.118 (64s)
