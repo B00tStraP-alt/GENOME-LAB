@@ -1,0 +1,6 @@
+frag test C=200: gate med/3 q/3 vs lex(cont,bh): wins 46 losses 1
+   loss t=177 arm=9 qn=9 src_ed=2 top_ed=1 med=7.0 src_cont=0.906 top_cont=0.833
+ctrl test C=200: gate med/3 q/3 vs lex(cont,bh): wins 0 losses 3
+   loss t=68 arm=0 qn=15 src_ed=4 top_ed=1 med=5.0 src_cont=1.000 top_cont=0.933
+   loss t=592 arm=0 qn=17 src_ed=7 top_ed=3 med=9.0 src_cont=0.824 top_cont=0.509
+   loss t=880 arm=0 qn=15 src_ed=4 top_ed=2 med=7.0 src_cont=1.000 top_cont=0.582

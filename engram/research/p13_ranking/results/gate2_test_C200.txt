@@ -1,0 +1,16 @@
+frag test C=200 lex(cont,bh)         r@1 0.9650  vs bag: +0 -0
+frag test C=200 aligned, delta=0.05  r@1 0.9714  vs bag: +23 -0
+frag test C=200 aligned, delta=0.1   r@1 0.9756  vs bag: +39 -1
+frag test C=200 aligned, delta=0.15  r@1 0.9764  vs bag: +42 -1
+frag test C=200 aligned, delta=0.2   r@1 0.9772  vs bag: +45 -1
+frag test C=200 aligned, delta=0.25  r@1 0.9775  vs bag: +46 -1
+frag test C=200 aligned, delta=0.3   r@1 0.9775  vs bag: +46 -1
+frag test C=200 aligned, delta=9     r@1 0.9775  vs bag: +46 -1
+ctrl test C=200 lex(cont,bh)         r@1 0.9392  vs bag: +0 -0
+ctrl test C=200 aligned, delta=0.05  r@1 0.9392  vs bag: +0 -0
+ctrl test C=200 aligned, delta=0.1   r@1 0.9383  vs bag: +0 -1
+ctrl test C=200 aligned, delta=0.15  r@1 0.9383  vs bag: +0 -1
+ctrl test C=200 aligned, delta=0.2   r@1 0.9383  vs bag: +0 -1
+ctrl test C=200 aligned, delta=0.25  r@1 0.9383  vs bag: +0 -1
+ctrl test C=200 aligned, delta=0.3   r@1 0.9383  vs bag: +0 -1
+ctrl test C=200 aligned, delta=9     r@1 0.9367  vs bag: +0 -3

@@ -1,0 +1,3 @@
+frag dev C=200: gate med/3 q/3 vs lex(cont,bh): wins 75 losses 0
+ctrl dev C=200: gate med/3 q/3 vs lex(cont,bh): wins 0 losses 1
+   loss t=236 arm=0 qn=13 src_ed=6 top_ed=2 med=6.0 src_cont=0.761 top_cont=0.434

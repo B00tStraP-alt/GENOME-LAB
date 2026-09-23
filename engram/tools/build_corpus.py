@@ -22,6 +22,12 @@ TWO DEFECTS THIS FILE ONCE HAD, kept here so they are not reintroduced:
      so it fell inside the body. Being long ASCII, it passed the length filter and became the only
      "paragraph" extracted from a 1.8 MB novel.
 
+THE SCALE CORPUS (P1.3). scale_docs.txt holds EVERY acceptable paragraph of at least SCALE_MIN_BYTES
+of all ten books -- about 21,000 episodes once the store has cut them -- one paragraph per line. The
+episodic store is proven at the size where the P1.3 lab found ranking to be the weak link, not at the
+size where everything works. Order: by SHA-256 of "book:index", so any prefix is a mixed store and the
+order depends on nothing but the bytes (no random module, whose sequence is not a promise).
+
 Usage:  build_corpus.py <dir-with-pgNNNN.txt> <out-dir>
 """
 import hashlib
@@ -47,6 +53,7 @@ START = re.compile(r"\*\*\* ?START OF (THE|THIS) PROJECT GUTENBERG EBOOK.*?\*\*\
 END = re.compile(r"\*\*\* ?END OF (THE|THIS) PROJECT GUTENBERG EBOOK", re.I)
 LEGACY_FOOTER = re.compile(r"^\s*End of (the )?Project Gutenberg", re.I | re.M)
 IDEOGRAPHIC_SPACE = "　"
+SCALE_MIN_BYTES = 60
 
 
 def body(text):
@@ -97,10 +104,13 @@ def acceptable(p):
 
 def main(src_dir, out_dir):
     os.makedirs(out_dir, exist_ok=True)
-    by_lang, manifest = {}, []
+    by_lang, manifest, scale = {}, [], []
     for pid, (lang, title, lo, hi, keep) in SOURCES.items():
         raw = open(os.path.join(src_dir, "pg%d.txt" % pid), encoding="utf-8").read()
-        paras = [p for p in paragraphs(body(raw), lang) if lo <= len(p) <= hi and acceptable(p)]
+        allp = paragraphs(body(raw), lang)
+        scale += [(hashlib.sha256(("%d:%d" % (pid, i)).encode()).hexdigest(), p)
+                  for i, p in enumerate(allp) if len(p.encode("utf-8")) >= SCALE_MIN_BYTES and acceptable(p)]
+        paras = [p for p in allp if lo <= len(p) <= hi and acceptable(p)]
         step = max(1, len(paras) // keep)
         chosen = paras[::step][:keep]
         by_lang.setdefault(lang, []).extend(chosen)
@@ -116,6 +126,12 @@ def main(src_dir, out_dir):
             f.write(raw)
         lines.append("  corpus_%s.txt  %4d paragraphs  %7d bytes  sha256 %s"
                      % (lang, len(by_lang[lang]), len(raw), hashlib.sha256(raw).hexdigest()))
+    raw = ("\n".join(p for _, p in sorted(scale)) + "\n").encode("utf-8")
+    with open(os.path.join(out_dir, "scale_docs.txt"), "wb") as f:
+        f.write(raw)
+    lines.append("")
+    lines.append("  scale_docs.txt %5d paragraphs %8d bytes  sha256 %s  (every paragraph >= %d bytes, all ten books)"
+                 % (len(scale), len(raw), hashlib.sha256(raw).hexdigest(), SCALE_MIN_BYTES))
     with open(os.path.join(out_dir, "MANIFEST.txt"), "w", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))

@@ -78,7 +78,8 @@ if prints_equal "$tmpa" "$tmpb" >/dev/null; then echo "  GATE BROKEN: the print 
 printf 'OTHERPRINT 0123456789ABCDEF\n' > "$tmpb"
 if prints_equal "$tmpa" "$tmpb" >/dev/null; then echo "  GATE BROKEN: the print comparison accepted a missing print"; exit 3; fi
 if prints_equal "$LOG_DIR/linux.log" "$LOG_DIR/windows_on_wine.log"; then
-    echo "  PASS  cross-platform identity"; SUMMARY+=("  PASS  cross-platform identity (FINGERPRINT, SIGPRINT, EXACTPRINT)")
+    keys=$(tr -d '\r' < "$LOG_DIR/linux.log" | grep -oE '^[A-Z]+PRINT' | sort -u | tr '\n' ' ')
+    echo "  PASS  cross-platform identity"; SUMMARY+=("  PASS  cross-platform identity (${keys% })")
 else
     echo "  FAIL  cross-platform identity"; SUMMARY+=("  FAIL  cross-platform identity"); fail=1
 fi

@@ -399,16 +399,17 @@ engram_rc engram_encq_build(engram_encq *q, const engram_enc_cfg *cfg, const voi
     return ENGRAM_OK;
 }
 
-engram_rc engram_encq_score(engram_encq *q, const void *text, size_t n, double *score)
+engram_rc engram_encq_scores(engram_encq *q, const void *text, size_t n, double *exact, double *contain)
 {
     engram_enc_stats st;
     engram_encst s;
     engram_textit it;
     engram_rc rc;
-    double num = 0.0;
+    double num = 0.0, held = 0.0;
     unsigned j;
-    if (score) *score = 0.0;
-    if (!q || !score) return ENGRAM_E_ARG;
+    if (exact) *exact = 0.0;
+    if (contain) *contain = 0.0;
+    if (!q) return ENGRAM_E_ARG;
     if (!q->ready) return ENGRAM_E_STATE;
     for (j = 0; j < q->n; j++) q->dw[q->occ[j]] = 0.0;
     rc = engram_walk_init(&s, &it, &q->cfg, text, n, &st);
@@ -420,11 +421,24 @@ engram_rc engram_encq_score(engram_encq *q, const void *text, size_t n, double *
     if (!(s.dmass > 0.0)) return ENGRAM_E_SHORT;
     for (j = 0; j < q->n; j++) {
         unsigned i = q->occ[j];
-        if (q->dw[i] > 0.0) num += sqrt(q->qw[i] * q->dw[i]);
+        if (q->dw[i] > 0.0) { num += sqrt(q->qw[i] * q->dw[i]); held += q->qw[i]; }
     }
-    *score = num / sqrt(q->qmass * s.dmass);
-    if (*score > 1.0) *score = 1.0;                  /* only rounding can put it there */
+    if (exact) {
+        *exact = num / sqrt(q->qmass * s.dmass);
+        if (*exact > 1.0) *exact = 1.0;              /* only rounding can put it there */
+    }
+    if (contain) {
+        *contain = held / q->qmass;
+        if (*contain > 1.0) *contain = 1.0;          /* the same */
+    }
     return ENGRAM_OK;
+}
+
+engram_rc engram_encq_score(engram_encq *q, const void *text, size_t n, double *score)
+{
+    if (score) *score = 0.0;
+    if (!q || !score) return ENGRAM_E_ARG;
+    return engram_encq_scores(q, text, n, score, NULL);
 }
 
 /* ==================================================================================================
