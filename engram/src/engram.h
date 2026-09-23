@@ -155,8 +155,12 @@ typedef enum {
     ENGRAM_E_FULL     = -11,   /* a bounded structure is at its stated capacity                    */
     ENGRAM_E_STATE    = -12,   /* called in a state where the operation is not defined             */
     ENGRAM_E_UTF8     = -13,   /* text is not valid UTF-8, and is refused rather than guessed at   */
-    ENGRAM_E_INTERNAL = -14    /* an invariant this code relies on did not hold -- a bug, reported */
+    ENGRAM_E_INTERNAL = -14,   /* an invariant this code relies on did not hold -- a bug, reported */
+    ENGRAM_E_EXISTS   = -15    /* the thing to be created already exists: nothing was touched      */
 } engram_rc;
+
+/* The most negative code: every value from here to ENGRAM_OK is a defined code. */
+#define ENGRAM_RC_MIN ENGRAM_E_EXISTS
 
 /* A stable, human-readable name for a return code. Never NULL: an unknown code returns a string
  * saying so, because a logging path that crashes on an unexpected code destroys the one piece of

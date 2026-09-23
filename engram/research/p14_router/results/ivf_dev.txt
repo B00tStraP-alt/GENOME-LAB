@@ -1,0 +1,28 @@
+N=21811, 3600 dev fragment cues; full signature scan holds the source in its top 50 for 0.9953
+C=64: k-means 8.1 s, largest bucket 917 (mean 341), 0 empty
+  self-routing (own vector -> own bucket) 0.9875
+  nprobe   1  probed 0.018 of keys  ANN recall@10 0.2604  store: source in top 50 0.2631
+  nprobe   2  probed 0.035 of keys  ANN recall@10 0.4017  store: source in top 50 0.3992
+  nprobe   4  probed 0.068 of keys  ANN recall@10 0.5732  store: source in top 50 0.5636
+  nprobe   8  probed 0.130 of keys  ANN recall@10 0.7425  store: source in top 50 0.7228
+  nprobe  16  probed 0.251 of keys  ANN recall@10 0.8912  store: source in top 50 0.8767
+  nprobe  32  probed 0.509 of keys  ANN recall@10 0.9717  store: source in top 50 0.9547
+  nprobe  64  probed 1.000 of keys  ANN recall@10 1.0000  store: source in top 50 0.9953
+C=148: k-means 19.1 s, largest bucket 360 (mean 147), 0 empty
+  self-routing (own vector -> own bucket) 0.9937
+  nprobe   1  probed 0.007 of keys  ANN recall@10 0.1728  store: source in top 50 0.1750
+  nprobe   2  probed 0.015 of keys  ANN recall@10 0.2771  store: source in top 50 0.2786
+  nprobe   4  probed 0.029 of keys  ANN recall@10 0.4156  store: source in top 50 0.4261
+  nprobe   8  probed 0.058 of keys  ANN recall@10 0.5774  store: source in top 50 0.5803
+  nprobe  16  probed 0.114 of keys  ANN recall@10 0.7437  store: source in top 50 0.7361
+  nprobe  32  probed 0.222 of keys  ANN recall@10 0.8849  store: source in top 50 0.8675
+  nprobe  64  probed 0.441 of keys  ANN recall@10 0.9665  store: source in top 50 0.9497
+C=512: k-means 66.2 s, largest bucket 225 (mean 43), 0 empty
+  self-routing (own vector -> own bucket) 0.9987
+  nprobe   1  probed 0.002 of keys  ANN recall@10 0.0971  store: source in top 50 0.1178
+  nprobe   2  probed 0.005 of keys  ANN recall@10 0.1619  store: source in top 50 0.1856
+  nprobe   4  probed 0.010 of keys  ANN recall@10 0.2486  store: source in top 50 0.2789
+  nprobe   8  probed 0.020 of keys  ANN recall@10 0.3678  store: source in top 50 0.3936
+  nprobe  16  probed 0.039 of keys  ANN recall@10 0.5179  store: source in top 50 0.5419
+  nprobe  32  probed 0.076 of keys  ANN recall@10 0.6797  store: source in top 50 0.6950
+  nprobe  64  probed 0.144 of keys  ANN recall@10 0.8274  store: source in top 50 0.8233
