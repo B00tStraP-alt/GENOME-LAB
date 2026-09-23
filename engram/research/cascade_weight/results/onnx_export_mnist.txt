@@ -1,0 +1,2 @@
+exported /tmp/claude-0/-home-user-GENOME-LAB/0298d4b1-603d-511e-b996-5323416f4c9a/scratchpad/nw/c16.onnx: 668672 weights stored in 133735 bytes = 1.600 bits/weight; file 141764 bytes
+onnxruntime accuracy 0.9802  numpy accuracy 0.9802  prediction agreement 1.0000  max |logit diff| 1.79e-02

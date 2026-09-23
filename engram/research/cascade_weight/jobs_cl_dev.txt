@@ -1,0 +1,13 @@
+fp32 1e-3
+bitnet 1e-3
+bitnet_meta:0.5 1e-3
+bitnet_meta:1 1e-3
+bitnet_meta:2 1e-3
+bitnet_meta:4 1e-3
+cascade16:0 1
+cascade16:1 1
+cascade16:2 1
+cascade16:4 1
+cascade16:8 1
+cascade:0 1
+cascade:2 1
