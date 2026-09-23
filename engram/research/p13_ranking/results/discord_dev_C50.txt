@@ -1,0 +1,2 @@
+frag dev C=50: gate med/3 q/3 vs lex(cont,bh): wins 72 losses 0
+ctrl dev C=50: gate med/3 q/3 vs lex(cont,bh): wins 0 losses 0

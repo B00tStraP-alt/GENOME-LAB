@@ -1,0 +1,1 @@
+{"approach": "baseline", "N": 21811, "split": "test", "queries": 3600, "ms_stage1": 6.017, "s1_recall_10": 0.9892, "r1_cascade_10": 0.9292, "s1_recall_50": 0.9956, "r1_cascade_50": 0.9208, "s1_recall_200": 0.9989, "r1_cascade_200": 0.9183, "r1_exhaustive": 0.9167}

@@ -263,6 +263,20 @@ engram_rc engram_encq_build(engram_encq *q, const engram_enc_cfg *cfg, const voi
  * integer weights sum exactly, and the final sum runs over the query's features in insertion order. */
 engram_rc engram_encq_score(engram_encq *q, const void *text, size_t n, double *score);
 
+/* Both exact scores of one document in the one pass: *exact as engram_encq_score, and *contain, the
+ * CONTAINMENT of the query in the document -- how much of the query's feature mass it holds at all:
+ *
+ *                       sum over k with d_k > 0 of q_k
+ *      contain(q, d) = --------------------------------      in [0, 1]
+ *                              sum over k of q_k
+ *
+ * It is the exact form of what the signature estimates, and it ignores how much else the document
+ * says -- which is what a fragment's source looks like: all of the fragment, plus the rest of its own
+ * text. (The store ranks by it; engram_store.h has the measurements.) Same return codes as
+ * engram_encq_score; either output may be NULL; both are 0 on any failure. Deterministic to the bit:
+ * the sum runs over the query's features in insertion order. */
+engram_rc engram_encq_scores(engram_encq *q, const void *text, size_t n, double *exact, double *contain);
+
 /* ---- THE SIGNATURE: which memories could contain this query? ------------------------------------
  * WHY IT EXISTS. The first cascade put the dense vector in front of the exact stage, and test_enc's
  * T8 caught it losing: on held-out English fragments the dense top 50 missed the source often enough

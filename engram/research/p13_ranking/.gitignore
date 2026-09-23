@@ -1,0 +1,16 @@
+# regenerable inputs and outputs of the lab (see README.md)
+corpus_scale.txt
+pg*.txt
+dump_*.tsv
+*_q_*.tsv
+queries_*.tsv
+# binaries
+lab
+rarity
+rarity2
+rarity3
+rarity4
+dump
+e2e
+explore8
+__pycache__/

@@ -1,0 +1,48 @@
+N=21811 dev C=10 s1_recall 0.9900
+  bhatt                          opt 0.9292  exp 0.9292  pess 0.9292
+  cont (no idf)                  opt 0.9669  exp 0.9487  pess 0.9392
+  cont-idf exact                 opt 0.9631  exp 0.9479  pess 0.9400
+  cont-idf floor4                opt 0.9631  exp 0.9479  pess 0.9400
+  cont-idf floor16               opt 0.9636  exp 0.9485  pess 0.9406
+  cont-idf floor64               opt 0.9642  exp 0.9490  pess 0.9411
+  cont-idf floor256              opt 0.9644  exp 0.9488  pess 0.9408
+  cont-idf sigraw                opt 0.9631  exp 0.9477  pess 0.9397
+  cont-idf sigcorr               opt 0.9589  exp 0.9437  pess 0.9358
+  cont-idf fixed                 opt 0.9631  exp 0.9479  pess 0.9400
+  contmin-idf exact              opt 0.9628  exp 0.9479  pess 0.9400
+  lex(cont-idf exact, bhatt)     opt 0.9536  exp 0.9536  pess 0.9536
+  lex(cont-idf sigcorr, bhatt)   opt 0.9494  exp 0.9494  pess 0.9494
+  bm25 1.2/0.75                  opt 0.9519  exp 0.9519  pess 0.9519
+  lex(cont-idf fixed, bhatt)     opt 0.9536  exp 0.9536  pess 0.9536
+N=21811 dev C=50 s1_recall 0.9953
+  bhatt                          opt 0.9172  exp 0.9172  pess 0.9172
+  cont (no idf)                  opt 0.9672  exp 0.9487  pess 0.9392
+  cont-idf exact                 opt 0.9628  exp 0.9474  pess 0.9394
+  cont-idf floor4                opt 0.9628  exp 0.9474  pess 0.9394
+  cont-idf floor16               opt 0.9636  exp 0.9482  pess 0.9403
+  cont-idf floor64               opt 0.9642  exp 0.9488  pess 0.9408
+  cont-idf floor256              opt 0.9647  exp 0.9489  pess 0.9408
+  cont-idf sigraw                opt 0.9628  exp 0.9476  pess 0.9397
+  cont-idf sigcorr               opt 0.9583  exp 0.9434  pess 0.9356
+  cont-idf fixed                 opt 0.9628  exp 0.9474  pess 0.9394
+  contmin-idf exact              opt 0.9625  exp 0.9473  pess 0.9394
+  lex(cont-idf exact, bhatt)     opt 0.9531  exp 0.9531  pess 0.9531
+  lex(cont-idf sigcorr, bhatt)   opt 0.9486  exp 0.9486  pess 0.9486
+  bm25 1.2/0.75                  opt 0.9514  exp 0.9514  pess 0.9514
+  lex(cont-idf fixed, bhatt)     opt 0.9531  exp 0.9531  pess 0.9531
+N=21811 dev C=200 s1_recall 0.9983
+  bhatt                          opt 0.9119  exp 0.9119  pess 0.9119
+  cont (no idf)                  opt 0.9675  exp 0.9487  pess 0.9392
+  cont-idf exact                 opt 0.9631  exp 0.9474  pess 0.9394
+  cont-idf floor4                opt 0.9631  exp 0.9474  pess 0.9394
+  cont-idf floor16               opt 0.9639  exp 0.9482  pess 0.9403
+  cont-idf floor64               opt 0.9644  exp 0.9488  pess 0.9408
+  cont-idf floor256              opt 0.9650  exp 0.9489  pess 0.9408
+  cont-idf sigraw                opt 0.9631  exp 0.9476  pess 0.9397
+  cont-idf sigcorr               opt 0.9586  exp 0.9434  pess 0.9356
+  cont-idf fixed                 opt 0.9631  exp 0.9474  pess 0.9394
+  contmin-idf exact              opt 0.9628  exp 0.9473  pess 0.9394
+  lex(cont-idf exact, bhatt)     opt 0.9531  exp 0.9531  pess 0.9531
+  lex(cont-idf sigcorr, bhatt)   opt 0.9486  exp 0.9486  pess 0.9486
+  bm25 1.2/0.75                  opt 0.9514  exp 0.9514  pess 0.9514
+  lex(cont-idf fixed, bhatt)     opt 0.9531  exp 0.9531  pess 0.9531

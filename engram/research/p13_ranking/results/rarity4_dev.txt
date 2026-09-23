@@ -1,0 +1,40 @@
+N=21811 dev C=10 s1_recall 0.9800
+  bhatt                                  opt 0.9067  exp 0.9067  pess 0.9067
+  lex(cont, bhatt)                       opt 0.9342  exp 0.9342  pess 0.9342
+  lex(cidf, bhatt)                       opt 0.9275  exp 0.9275  pess 0.9275
+  lex(-ED, cidf, bhatt)                  opt 0.6242  exp 0.6242  pess 0.6242
+  lex(cidf, -ED, bhatt)                  opt 0.9258  exp 0.9258  pess 0.9258
+  lex(gated -ED <= |q|/5, cidf, bhatt)   opt 0.9267  exp 0.9267  pess 0.9267
+  lex(gated -ED <= |q|/3, cidf, bhatt)   opt 0.9000  exp 0.9000  pess 0.9000
+  lex(-ED, cont, bhatt)                  opt 0.6258  exp 0.6258  pess 0.6258
+  lex(gated -ED <= |q|/3, cont, bhatt)   opt 0.9050  exp 0.9050  pess 0.9050
+N=21811 dev C=50 s1_recall 0.9925
+  bhatt                                  opt 0.9000  exp 0.9000  pess 0.9000
+  lex(cont, bhatt)                       opt 0.9342  exp 0.9342  pess 0.9342
+  lex(cidf, bhatt)                       opt 0.9275  exp 0.9275  pess 0.9275
+  lex(-ED, cidf, bhatt)                  opt 0.5208  exp 0.5208  pess 0.5208
+  lex(cidf, -ED, bhatt)                  opt 0.9258  exp 0.9258  pess 0.9258
+  lex(gated -ED <= |q|/5, cidf, bhatt)   opt 0.9233  exp 0.9233  pess 0.9233
+  lex(gated -ED <= |q|/3, cidf, bhatt)   opt 0.8833  exp 0.8833  pess 0.8833
+  lex(-ED, cont, bhatt)                  opt 0.5225  exp 0.5225  pess 0.5225
+  lex(gated -ED <= |q|/3, cont, bhatt)   opt 0.8883  exp 0.8883  pess 0.8883
+N=21811 dev C=200 s1_recall 0.9975
+  bhatt                                  opt 0.8933  exp 0.8933  pess 0.8933
+  lex(cont, bhatt)                       opt 0.9342  exp 0.9342  pess 0.9342
+  lex(cidf, bhatt)                       opt 0.9275  exp 0.9275  pess 0.9275
+  lex(-ED, cidf, bhatt)                  opt 0.4650  exp 0.4650  pess 0.4650
+  lex(cidf, -ED, bhatt)                  opt 0.9258  exp 0.9258  pess 0.9258
+  lex(gated -ED <= |q|/5, cidf, bhatt)   opt 0.9225  exp 0.9225  pess 0.9225
+  lex(gated -ED <= |q|/3, cidf, bhatt)   opt 0.8767  exp 0.8767  pess 0.8767
+  lex(-ED, cont, bhatt)                  opt 0.4658  exp 0.4658  pess 0.4658
+  lex(gated -ED <= |q|/3, cont, bhatt)   opt 0.8817  exp 0.8817  pess 0.8817
+C=50 misses (incl. ties) by control arm (of 300 each):
+  bhatt                                  kw3:82   kw5:31   kw8:3    shuf:4   
+  lex(cont, bhatt)                       kw3:61   kw5:13   kw8:4    shuf:1   
+  lex(cidf, bhatt)                       kw3:69   kw5:14   kw8:4    shuf:0   
+  lex(-ED, cidf, bhatt)                  kw3:211  kw5:173  kw8:142  shuf:49  
+  lex(cidf, -ED, bhatt)                  kw3:71   kw5:14   kw8:4    shuf:0   
+  lex(gated -ED <= |q|/5, cidf, bhatt)   kw3:74   kw5:14   kw8:4    shuf:0   
+  lex(gated -ED <= |q|/3, cidf, bhatt)   kw3:115  kw5:18   kw8:4    shuf:3   
+  lex(-ED, cont, bhatt)                  kw3:209  kw5:173  kw8:142  shuf:49  
+  lex(gated -ED <= |q|/3, cont, bhatt)   kw3:108  kw5:19   kw8:4    shuf:3   

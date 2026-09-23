@@ -1,0 +1,26 @@
+overlap 0 dev C=50 nsrc 300
+  frag 12B/0 typos  n=300  FULL 0.8000  BAG 0.7700  EXACT 0.4800  cand 0.9900
+  frag 16B/0 typos  n=300  FULL 0.9233  BAG 0.8933  EXACT 0.6433  cand 0.9933
+  frag 24B/0 typos  n=300  FULL 0.9833  BAG 0.9833  EXACT 0.9067  cand 1.0000
+  frag 40B/0 typos  n=300  FULL 1.0000  BAG 1.0000  EXACT 0.9867  cand 1.0000
+  frag 64B/0 typos  n=300  FULL 0.9967  BAG 0.9967  EXACT 0.9967  cand 1.0000
+  frag 96B/0 typos  n=300  FULL 0.9967  BAG 0.9967  EXACT 0.9933  cand 1.0000
+  frag 12B/1 typos  n=300  FULL 0.7233  BAG 0.5867  EXACT 0.3867  cand 0.9367
+  frag 16B/1 typos  n=300  FULL 0.9067  BAG 0.8000  EXACT 0.5467  cand 0.9900
+  frag 24B/1 typos  n=300  FULL 0.9967  BAG 0.9867  EXACT 0.8533  cand 1.0000
+  frag 40B/1 typos  n=300  FULL 0.9967  BAG 0.9933  EXACT 0.9867  cand 1.0000
+  frag 64B/1 typos  n=300  FULL 0.9967  BAG 0.9967  EXACT 0.9933  cand 1.0000
+  frag 96B/1 typos  n=300  FULL 1.0000  BAG 1.0000  EXACT 1.0000  cand 1.0000
+  frag 12B/2 typos  n=300  FULL 0.4700  BAG 0.3433  EXACT 0.2567  cand 0.8233
+  frag 16B/2 typos  n=300  FULL 0.8400  BAG 0.6933  EXACT 0.4767  cand 0.9700
+  frag 24B/2 typos  n=300  FULL 0.9767  BAG 0.9600  EXACT 0.7833  cand 1.0000
+  frag 40B/2 typos  n=300  FULL 0.9967  BAG 0.9967  EXACT 0.9867  cand 1.0000
+  frag 64B/2 typos  n=300  FULL 0.9967  BAG 0.9967  EXACT 0.9967  cand 1.0000
+  frag 96B/2 typos  n=300  FULL 1.0000  BAG 1.0000  EXACT 1.0000  cand 1.0000
+  ctrl kw3         n=299  FULL 0.7826  BAG 0.7860  EXACT 0.6589  cand 0.9632
+  ctrl kw5         n=299  FULL 0.9231  BAG 0.9231  EXACT 0.8963  cand 0.9933
+  ctrl kw8         n=299  FULL 0.9900  BAG 0.9900  EXACT 0.9833  cand 1.0000
+  ctrl shuf        n=300  FULL 0.9433  BAG 0.9467  EXACT 0.9367  cand 0.9900
+  FRAGMENTS  FULL 0.9222  BAG 0.8885  EXACT 0.7930  (candidate recall 0.9835, n=5400)
+  CONTROL    FULL 0.9098  BAG 0.9114  EXACT 0.8688  (candidate recall 0.9866, n=1197)
+  FULL vs BAG paired: fragments +182 -0, control +1 -3

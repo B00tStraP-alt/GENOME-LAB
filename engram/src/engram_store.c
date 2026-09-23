@@ -18,12 +18,22 @@
  *               counts and next_id move. No step of 4 can fail.
  * ============================================================================================== */
 #include "engram_store.h"
+#include "engram_align.h"
 #include "engram_alloc.h"
 #include "engram_chunk.h"
 
 #include <string.h>
 
-typedef struct { double s; size_t slot; } engram_cand;     /* a recall candidate */
+typedef struct { double s; size_t slot; } engram_cand;     /* a stage-1 candidate */
+
+typedef struct {                                            /* a stage-2 candidate */
+    size_t   slot;
+    double   contain, exact;
+    uint32_t edits, aligned;
+} engram_ranked;
+
+/* How far the bag may disagree with an alignment it lets through (THE RANKING, engram_store.h). */
+#define ENGRAM_ALIGN_BAG_SLACK 0.2
 
 struct engram_store {
     engram_store_cfg cfg;
@@ -42,7 +52,10 @@ struct engram_store {
     uint64_t         adds, deletes, evictions, refusals, compactions;
     engram_encq     *q;                    /* recall scratch                            */
     engram_cand     *cand;
-    size_t           cap_cand;
+    engram_ranked   *rk;
+    size_t           cap_cand, cap_rk;
+    size_t           amax_d, amax_q;       /* alignment capacity: episode, cue (codepoints) */
+    uint32_t        *acue, *atext, *awork, *ahist;
 };
 
 void engram_store_cfg_default(engram_store_cfg *cfg)
@@ -54,6 +67,7 @@ void engram_store_cfg_default(engram_store_cfg *cfg)
     cfg->chunk_cap      = ENGRAM_EPI_TAIL;
     cfg->chunk_overlap  = 0u;
     cfg->recall_c       = 50u;
+    cfg->rank           = ENGRAM_RANK_FULL;
     engram_enc_cfg_default(&cfg->enc);
 }
 
@@ -61,6 +75,8 @@ static engram_rc engram_store_cfg_check(const engram_store_cfg *c)
 {
     engram_chunkit it;
     if (!c || !c->max_episodes || !c->max_text_bytes || !c->recall_c) return ENGRAM_E_ARG;
+    if (c->rank != ENGRAM_RANK_FULL && c->rank != ENGRAM_RANK_BAG && c->rank != ENGRAM_RANK_EXACT)
+        return ENGRAM_E_ARG;
     if (engram_enc_cfg_check(&c->enc) != ENGRAM_OK || c->enc.tf != ENGRAM_TF_SQRT) return ENGRAM_E_ARG;
     return engram_chunkit_init(&it, "", 0u, c->chunk_cap, c->chunk_overlap);
 }
@@ -81,8 +97,18 @@ engram_rc engram_store_open(engram_store **out, const engram_store_cfg *cfg)
     s->cfg = *cfg;
     s->geometry = engram_enc_geometry(&cfg->enc, ENGRAM_D);
     s->next_id = 1u;
+    /* Alignment buffers, sized by proof rather than by hope: an episode of b bytes normalises to at
+     * most ENGRAM_FOLD_OUT_MAX * b codepoints (test_align), and a cue longer than 3/2 of that can
+     * never be aligned -- edits >= |q| - |d| > |q| / 3 -- so it is not aligned at all, which is the
+     * same answer without the work. */
+    s->amax_d = ENGRAM_FOLD_OUT_MAX * cfg->chunk_cap;
+    s->amax_q = s->amax_d * 3u / 2u;
     s->q = (engram_encq *)engram_malloc(sizeof *s->q);
-    if (!s->q) { engram_free(s); return ENGRAM_E_MEM; }
+    s->acue = (uint32_t *)engram_array(s->amax_q, sizeof *s->acue);
+    s->atext = (uint32_t *)engram_array(s->amax_d, sizeof *s->atext);
+    s->awork = (uint32_t *)engram_array(3u * (s->amax_d + 1u), sizeof *s->awork);
+    s->ahist = (uint32_t *)engram_array(s->amax_q + 1u, sizeof *s->ahist);
+    if (!s->q || !s->acue || !s->atext || !s->awork || !s->ahist) { engram_store_close(s); return ENGRAM_E_MEM; }
     *out = s;
     return ENGRAM_OK;
 }
@@ -92,7 +118,8 @@ void engram_store_close(engram_store *s)
     if (!s) return;
     engram_free(s->id); engram_free(s->time_ms); engram_free(s->source); engram_free(s->flags);
     engram_free(s->recalls); engram_free(s->off); engram_free(s->len); engram_free(s->sig);
-    engram_free(s->text); engram_free(s->q); engram_free(s->cand);
+    engram_free(s->text); engram_free(s->q); engram_free(s->cand); engram_free(s->rk);
+    engram_free(s->acue); engram_free(s->atext); engram_free(s->awork); engram_free(s->ahist);
     engram_free(s);
 }
 
@@ -282,7 +309,7 @@ engram_rc engram_store_get(const engram_store *s, uint64_t id, engram_episode *o
 /* ---- recall ----------------------------------------------------------------------------------
  * Stage 1: every live episode's signature containment. The C best, by a size-C min-heap whose
  * order is (score, then LOWER slot wins) -- a total order, so the candidate set is deterministic.
- * Stage 2: the exact score of each candidate; the k best returned, ties to the lower id. */
+ * Stage 2: THE RANKING (engram_store.h) over those C, sorted by a total order, the k best returned. */
 static int engram_cand_worse(const engram_cand *a, const engram_cand *b)
 {
     return a->s < b->s || (a->s == b->s && a->slot > b->slot);
@@ -301,11 +328,76 @@ static void engram_heap_sift(engram_cand *h, size_t n, size_t i)
     }
 }
 
+/* 1 if a ranks before b. A total order: no two candidates share a slot. */
+static int engram_ranked_before(const engram_ranked *a, const engram_ranked *b, engram_rank mode)
+{
+    if (mode == ENGRAM_RANK_FULL) {
+        if (a->aligned != b->aligned) return a->aligned > b->aligned;
+        if (a->aligned && a->edits != b->edits) return a->edits < b->edits;
+    }
+    if (mode != ENGRAM_RANK_EXACT && a->contain != b->contain) return a->contain > b->contain;
+    if (a->exact != b->exact) return a->exact > b->exact;
+    return a->slot < b->slot;
+}
+
+/* Heapsort into best-first order: the root of the heap is the candidate that ranks LAST. */
+static void engram_ranked_sift(engram_ranked *h, size_t n, size_t i, engram_rank mode)
+{
+    for (;;) {
+        size_t l = 2u * i + 1u, r = l + 1u, m = i;
+        engram_ranked t;
+        if (l < n && engram_ranked_before(&h[m], &h[l], mode)) m = l;
+        if (r < n && engram_ranked_before(&h[m], &h[r], mode)) m = r;
+        if (m == i) return;
+        t = h[i]; h[i] = h[m]; h[m] = t;
+        i = m;
+    }
+}
+
+static void engram_ranked_sort(engram_ranked *h, size_t n, engram_rank mode)
+{
+    size_t i;
+    if (n < 2u) return;
+    for (i = n / 2u; i-- > 0u; ) engram_ranked_sift(h, n, i, mode);
+    for (i = n - 1u; i > 0u; i--) {
+        engram_ranked t = h[0]; h[0] = h[i]; h[i] = t;
+        engram_ranked_sift(h, i, 0u, mode);
+    }
+}
+
+/* Mark the significant alignments among rk[0..m): see THE RANKING. edits are all <= qn <= amax_q. */
+static void engram_mark_aligned(engram_store *s, engram_ranked *rk, size_t m, size_t qn)
+{
+    size_t i, lo = (m - 1u) / 2u, hi = m / 2u, seen = 0;
+    uint32_t e, mlo = 0, mhi = 0;
+    uint64_t med2;
+    double best = 0.0;
+    int got_lo = 0;
+    memset(s->ahist, 0, (qn + 1u) * sizeof *s->ahist);
+    for (i = 0; i < m; i++) {
+        s->ahist[rk[i].edits]++;
+        if (rk[i].contain > best) best = rk[i].contain;
+    }
+    for (e = 0; e <= (uint32_t)qn; e++) {             /* the two middle order statistics */
+        seen += s->ahist[e];
+        if (!got_lo && seen > lo) { mlo = e; got_lo = 1; }
+        if (seen > hi) { mhi = e; break; }
+    }
+    med2 = (uint64_t)mlo + mhi;                       /* twice the median */
+    for (i = 0; i < m; i++) {
+        uint64_t ed = rk[i].edits;
+        rk[i].aligned = (6u * ed <= med2 && 3u * ed <= (uint64_t)qn &&
+                         rk[i].contain >= best - ENGRAM_ALIGN_BAG_SLACK) ? 1u : 0u;
+    }
+}
+
 engram_rc engram_store_recall(engram_store *s, const void *query, size_t n, engram_hit *hits,
                               size_t k, size_t *n_hits)
 {
     engram_cand *heap;
-    size_t C, hn = 0, slot, i, j;
+    engram_ranked *rk;
+    size_t C, hn = 0, slot, i, qn = 0;
+    int align = 0;
     engram_rc rc;
     if (n_hits) *n_hits = 0;
     if (!s || !hits || !n_hits || !k || (!query && n)) return ENGRAM_E_ARG;
@@ -313,8 +405,15 @@ engram_rc engram_store_recall(engram_store *s, const void *query, size_t n, engr
     if (rc != ENGRAM_OK) return rc;
     if (s->live == 0) return ENGRAM_OK;
     C = s->cfg.recall_c > k ? s->cfg.recall_c : k;
-    if (engram_grow((void **)&s->cand, &s->cap_cand, C, sizeof *s->cand) != ENGRAM_OK) return ENGRAM_E_MEM;
+    if (engram_grow((void **)&s->cand, &s->cap_cand, C, sizeof *s->cand) != ENGRAM_OK ||
+        engram_grow((void **)&s->rk, &s->cap_rk, C, sizeof *s->rk) != ENGRAM_OK) return ENGRAM_E_MEM;
+    if (s->cfg.rank == ENGRAM_RANK_FULL) {
+        rc = engram_align_norm(query, n, s->cfg.enc.fold, s->cfg.enc.utf8, s->acue, s->amax_q, &qn);
+        if (rc == ENGRAM_OK) align = qn > 0u;
+        else if (rc != ENGRAM_E_FULL) return rc;      /* E_FULL: too long to align -- see open */
+    }
     heap = s->cand;
+    rk = s->rk;
     for (slot = 0; slot < s->n; slot++) {
         engram_cand c;
         if (!(s->flags[slot] & ENGRAM_EPI_LIVE)) continue;
@@ -332,21 +431,31 @@ engram_rc engram_store_recall(engram_store *s, const void *query, size_t n, engr
             engram_heap_sift(heap, hn, 0u);
         }
     }
-    /* stage 2: exact scores, then an insertion sort of the candidates (C is small) */
+    /* stage 2. A stored episode always encodes (it was signed on the way in), so the scores and the
+     * normalisation cannot fail; if one ever did, the candidate would rank with zeros and edits = |q|,
+     * the worst values, rather than take the recall down. */
     for (i = 0; i < hn; i++) {
-        double e = 0.0;
-        (void)engram_encq_score(s->q, s->text + s->off[heap[i].slot], s->len[heap[i].slot], &e);
-        heap[i].s = e;
+        const char *t = s->text + s->off[heap[i].slot];
+        size_t tl = s->len[heap[i].slot], dn = 0;
+        rk[i].slot = heap[i].slot;
+        (void)engram_encq_scores(s->q, t, tl, &rk[i].exact, &rk[i].contain);
+        rk[i].edits = ENGRAM_EDITS_NONE;
+        rk[i].aligned = 0u;
+        if (align)
+            rk[i].edits = engram_align_norm(t, tl, s->cfg.enc.fold, s->cfg.enc.utf8, s->atext, s->amax_d, &dn)
+                              == ENGRAM_OK ? engram_align_dist(s->acue, qn, s->atext, dn, s->awork) : (uint32_t)qn;
     }
-    for (i = 1; i < hn; i++) {
-        engram_cand c = heap[i];
-        j = i;
-        while (j > 0u && engram_cand_worse(&heap[j - 1u], &c)) { heap[j] = heap[j - 1u]; j--; }
-        heap[j] = c;
+    if (align) engram_mark_aligned(s, rk, hn, qn);
+    engram_ranked_sort(rk, hn, s->cfg.rank);
+    for (i = 0; i < hn && i < k; i++) {
+        hits[i].id = s->id[rk[i].slot];
+        hits[i].contain = rk[i].contain;
+        hits[i].exact = rk[i].exact;
+        hits[i].edits = rk[i].edits;
+        hits[i].aligned = rk[i].aligned;
     }
-    for (i = 0; i < hn && i < k; i++) { hits[i].id = s->id[heap[i].slot]; hits[i].score = heap[i].s; }
     *n_hits = i;
-    if (i > 0u) s->recalls[heap[0].slot]++;
+    if (i > 0u) s->recalls[rk[0].slot]++;
     return ENGRAM_OK;
 }
 
@@ -362,7 +471,9 @@ void engram_store_stats_get(const engram_store *s, engram_store_stats *st)
     st->refusals = s->refusals; st->compactions = s->compactions;
     st->bytes_resident = sizeof *s + s->cap_id * 8u + s->cap_time * 8u + s->cap_src * 4u + s->cap_flags * 4u +
                          s->cap_rec * 4u + s->cap_off * sizeof(size_t) + s->cap_len * 2u + s->cap_sig * 8u +
-                         s->text_cap + sizeof *s->q + s->cap_cand * sizeof *s->cand;
+                         s->text_cap + sizeof *s->q + s->cap_cand * sizeof *s->cand +
+                         s->cap_rk * sizeof *s->rk + (s->amax_q + s->amax_d + 3u * (s->amax_d + 1u) +
+                         s->amax_q + 1u) * sizeof(uint32_t);
 }
 
 uint64_t engram_store_fingerprint(const engram_store *s)
@@ -371,6 +482,10 @@ uint64_t engram_store_fingerprint(const engram_store *s)
     size_t slot;
     if (!s) return 0;
     h = engram_mix2(0x53544F5245ull, s->geometry);
+    h = engram_mix2(h, (uint64_t)s->cfg.max_episodes);
+    h = engram_mix2(h, (uint64_t)s->cfg.max_text_bytes);
+    h = engram_mix2(h, ((uint64_t)s->cfg.chunk_cap << 32) | (uint64_t)s->cfg.chunk_overlap);
+    h = engram_mix2(h, ((uint64_t)s->cfg.recall_c << 8) | (uint64_t)s->cfg.rank);
     h = engram_mix2(h, s->next_id);
     h = engram_mix2(h, (uint64_t)s->live);
     for (slot = 0; slot < s->n; slot++) {

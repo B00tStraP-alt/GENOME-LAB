@@ -1,0 +1,16 @@
+frag dev C=50 lex(cont,bh)         r@1 0.9561  vs bag: +0 -0
+frag dev C=50 aligned, delta=0.05  r@1 0.9683  vs bag: +44 -0
+frag dev C=50 aligned, delta=0.1   r@1 0.9736  vs bag: +63 -0
+frag dev C=50 aligned, delta=0.15  r@1 0.9753  vs bag: +69 -0
+frag dev C=50 aligned, delta=0.2   r@1 0.9761  vs bag: +72 -0
+frag dev C=50 aligned, delta=0.25  r@1 0.9761  vs bag: +72 -0
+frag dev C=50 aligned, delta=0.3   r@1 0.9761  vs bag: +72 -0
+frag dev C=50 aligned, delta=9     r@1 0.9761  vs bag: +72 -0
+ctrl dev C=50 lex(cont,bh)         r@1 0.9342  vs bag: +0 -0
+ctrl dev C=50 aligned, delta=0.05  r@1 0.9342  vs bag: +0 -0
+ctrl dev C=50 aligned, delta=0.1   r@1 0.9342  vs bag: +0 -0
+ctrl dev C=50 aligned, delta=0.15  r@1 0.9342  vs bag: +0 -0
+ctrl dev C=50 aligned, delta=0.2   r@1 0.9342  vs bag: +0 -0
+ctrl dev C=50 aligned, delta=0.25  r@1 0.9342  vs bag: +0 -0
+ctrl dev C=50 aligned, delta=0.3   r@1 0.9342  vs bag: +0 -0
+ctrl dev C=50 aligned, delta=9     r@1 0.9342  vs bag: +0 -0

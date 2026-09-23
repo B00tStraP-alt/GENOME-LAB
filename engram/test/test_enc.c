@@ -1118,6 +1118,45 @@ static void test_exact(void)
     ET_OK(engram_encq_score(q, "\xE4\xB8\xAD\xE5\x9B\xBD", 6u, &s));
     ET_CHECKF(fabs(s - 128.0 / 393.0) < 1e-15, "scored %.17g, expected 128/393", s);
 
+    ET_SECTION("T14: containment -- bit-equal to its definition over the document's own table; 1 for a"
+               " verbatim occurrence; the exact score it rides with is unchanged");
+    {
+        unsigned badc = 0, bade = 0, verbatim = 0, badv = 0, j, k;
+        static char dbuf[512];
+        engram_rng_seed(&r, 0xC047u);
+        for (i = 0; i < 2000u; i++) {
+            double e1 = 0.0, e2 = 0.0, cont = -1.0, held = 0.0;
+            int verb = (int)engram_rng_below(&r, 3u) == 0;
+            rand_words(&r, a, sizeof a);
+            rand_words(&r, b, sizeof b);
+            if (verb) { snprintf(dbuf, sizeof dbuf, "%s %s %s", b, a, b); verbatim++; }
+            else snprintf(dbuf, sizeof dbuf, "%s", b);
+            if (engram_encq_build(q, NULL, a, strlen(a)) != ENGRAM_OK ||
+                engram_encq_build(q2, NULL, dbuf, strlen(dbuf)) != ENGRAM_OK ||
+                engram_encq_scores(q, dbuf, strlen(dbuf), &e1, &cont) != ENGRAM_OK ||
+                engram_encq_score(q, dbuf, strlen(dbuf), &e2) != ENGRAM_OK) { badc++; continue; }
+            for (j = 0; j < q->n; j++) {             /* the definition: is the key in the document's table? */
+                uint64_t key = q->key[q->occ[j]];
+                for (k = 0; k < ENGRAM_ENCQ_SLOTS; k++) if (q2->key[k] == key) { held += q->qw[q->occ[j]]; break; }
+            }
+            if (memcmp(&cont, &(double){ held / q->qmass > 1.0 ? 1.0 : held / q->qmass }, sizeof cont) != 0) badc++;
+            if (memcmp(&e1, &e2, sizeof e1) != 0) bade++;
+            if (verb && cont != 1.0) badv++;
+        }
+        printf("       2000 pairs (%u holding the query verbatim)\n", verbatim);
+        ET_EQ_U64(badc, 0u);
+        ET_EQ_U64(bade, 0u);
+        ET_EQ_U64(badv, 0u);
+        ET_RC(engram_encq_scores(NULL, "abc", 3u, &s, &s2), ENGRAM_E_ARG);
+        ET_OK(engram_encq_build(q, NULL, "abc", 3u));
+        ET_OK(engram_encq_scores(q, "abc", 3u, NULL, NULL));
+        s = 7.0; s2 = 7.0;
+        ET_RC(engram_encq_scores(q, "   ", 3u, &s, &s2), ENGRAM_E_SHORT);
+        ET_CHECK(s == 0.0 && s2 == 0.0);
+        ET_OK(engram_encq_scores(q, "zzz", 3u, &s, &s2));
+        ET_CHECK(s == 0.0 && s2 == 0.0);
+    }
+
     ET_SECTION("T14: deterministic to the bit, and a 4 MB document scores with ZERO allocations");
     {
         size_t bl = (size_t)4u << 20, k;

@@ -16,3 +16,5 @@
   corpus_fr.txt   220 paragraphs    99096 bytes  sha256 5c3a07cd397b88724066132b3297eb3bb03d7aa55e0dbf87ae48c11a81f91313
   corpus_sv.txt   140 paragraphs    60939 bytes  sha256 f5aa8ab63f1b5cdba08d781713187ff29145a045256111cb86288ddd6da79510
   corpus_zh.txt   320 paragraphs   221698 bytes  sha256 77d4ae660b4e4844e46750b070ed9f3bee5f800d12faf5a7d7688bc656f3ae0e
+
+  scale_docs.txt 16011 paragraphs  7887003 bytes  sha256 aa5ce4a4160e4e76de73ea6a2f490f4ecf44551fab15b3f362fa0feb0003d203  (every paragraph >= 60 bytes, all ten books)
