@@ -8,7 +8,7 @@
 /* ---- RETURN CODES ------------------------------------------------------------------------------
  * A table rather than a switch so the two lookups (message and symbolic name) cannot drift apart:
  * one row per code, both strings side by side, and a code added without a row is caught by the
- * P1.1 test that walks every value from ENGRAM_E_INTERNAL to ENGRAM_OK. */
+ * P1.1 test that walks every value from ENGRAM_RC_MIN to ENGRAM_OK. */
 typedef struct {
     engram_rc   rc;
     const char *name;
@@ -30,7 +30,8 @@ static const engram_rc_row ENGRAM_RC_TABLE[] = {
     { ENGRAM_E_FULL,     "ENGRAM_E_FULL",     "at capacity" },
     { ENGRAM_E_STATE,    "ENGRAM_E_STATE",    "operation not valid in this state" },
     { ENGRAM_E_UTF8,     "ENGRAM_E_UTF8",     "invalid UTF-8" },
-    { ENGRAM_E_INTERNAL, "ENGRAM_E_INTERNAL", "internal invariant violated" }
+    { ENGRAM_E_INTERNAL, "ENGRAM_E_INTERNAL", "internal invariant violated" },
+    { ENGRAM_E_EXISTS,   "ENGRAM_E_EXISTS",   "already exists" }
 };
 
 static const engram_rc_row *engram_rc_find(engram_rc rc)

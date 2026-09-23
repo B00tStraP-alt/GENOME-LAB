@@ -24,12 +24,12 @@ static void test_rc(void)
 {
     int v, w;
     ET_SECTION("return codes: every code named, every name distinct");
-    for (v = (int)ENGRAM_E_INTERNAL; v <= (int)ENGRAM_OK; v++) {
+    for (v = (int)ENGRAM_RC_MIN; v <= (int)ENGRAM_OK; v++) {
         const char *n = engram_rcname((engram_rc)v);
         const char *m = engram_strerror((engram_rc)v);
         ET_CHECKF(n && strcmp(n, "ENGRAM_E_UNKNOWN") != 0, "code %d has no name", v);
         ET_CHECKF(m && strcmp(m, "unknown error code") != 0, "code %d has no message", v);
-        for (w = (int)ENGRAM_E_INTERNAL; w < v; w++)
+        for (w = (int)ENGRAM_RC_MIN; w < v; w++)
             ET_CHECKF(strcmp(n, engram_rcname((engram_rc)w)) != 0, "codes %d and %d share a name", v, w);
     }
     ET_STREQ(engram_rcname(ENGRAM_OK), "ENGRAM_OK");
@@ -38,6 +38,8 @@ static void test_rc(void)
     ET_SECTION("return codes: an unknown code is reported, never NULL");
     ET_STREQ(engram_strerror((engram_rc)-999), "unknown error code");
     ET_STREQ(engram_rcname((engram_rc)12345), "ENGRAM_E_UNKNOWN");
+    ET_STREQ(engram_rcname((engram_rc)((int)ENGRAM_RC_MIN - 1)), "ENGRAM_E_UNKNOWN");   /* no code past the last */
+    ET_STREQ(engram_rcname(ENGRAM_E_EXISTS), "ENGRAM_E_EXISTS");
 }
 
 /* ==================================================================================================
