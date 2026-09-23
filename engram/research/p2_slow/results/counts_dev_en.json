@@ -1,0 +1,1 @@
+{"corpus": "en", "counts": {"uniform": {"dev": 8.0}, "unigram": {"dev": 4.441392079109519}, "order-1 counts (Witten-Bell to unigram)": {"dev": 3.4056715018538886}, "order-2 counts (Witten-Bell to unigram)": {"dev": 2.7534252224915643}, "order-3 counts (Witten-Bell to unigram)": {"dev": 2.3038607010153234}, "order-4 counts (Witten-Bell to unigram)": {"dev": 2.2091207362567613}}}

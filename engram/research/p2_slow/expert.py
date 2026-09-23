@@ -235,7 +235,14 @@ class Expert:
             g = np.zeros((len(feats), dz.shape[1]), F32)
             np.add.at(g, inv, np.repeat(s, a.orders, axis=0))
             if a.float:
-                gE = np.zeros_like(self.E); gE[feats] = g; self.Eopt.step(self.E, gE, sc)
+                # sparse Adam (as PyTorch's SparseAdam): only the rows this batch touched move, with the global
+                # step for the bias correction -- dense Adam over all F x H floats every step would cost 9 minutes
+                # an epoch and decay the moments of rows no batch has seen
+                o = self.Eopt; o.t += 1
+                o.m[feats] = F32(0.9) * o.m[feats] + F32(0.1) * g
+                o.v[feats] = F32(0.999) * o.v[feats] + F32(0.001) * g * g
+                mh = o.m[feats] / F32(1 - 0.9 ** o.t); vh = o.v[feats] / F32(1 - 0.999 ** o.t)
+                self.E[feats] -= F32(o.lr * sc) * mh / (np.sqrt(vh) + F32(1e-8))
             elif a.norm == "unit":
                 cascade_update_cols(self.B, feats, np.ascontiguousarray(g.T), F32(a.lr * sc))
             else:
@@ -320,13 +327,14 @@ def main():
             pos = order[b * bs:(b + 1) * bs]
             sc = F32(0.5 * (1 + np.cos(np.pi * t / T))) if a.sched == "cos" else F32(1.0)
             _, d = xent(model.fwd(tr, pos), tr[pos]); model.bwd(d, sc); t += 1
-        rec = {"epoch": ep + 1, "train_sample": bpb(model, tr, 0, 20000), "dev": bpb(model, S["dev"]), "sec": time.time() - t0}
+        rec = {"epoch": ep + 1, "train_sample": float(bpb(model, tr, 0, 20000)), "dev": float(bpb(model, S["dev"])),
+               "sec": time.time() - t0}
         hist.append(rec)
         print("  %s ep %d: train %.3f dev %.3f (%.0fs)" % (a.tag, ep + 1, rec["train_sample"], rec["dev"], rec["sec"]), file=sys.stderr, flush=True)
     out = {"tag": a.tag, "args": {k: v for k, v in vars(a).items() if k not in ("final", "counts")}, "history": hist,
            "best_dev": min(h["dev"] for h in hist), "final_dev": hist[-1]["dev"]}
     if a.final:
-        out["test"] = bpb(model, S["test"])
+        out["test"] = float(bpb(model, S["test"]))
     print(json.dumps(out), flush=True)
 
 
