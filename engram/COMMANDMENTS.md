@@ -27,7 +27,10 @@ and removed. A fix that makes a test pass without explaining why the test failed
 
 **V. Phase gating.** No phase begins until the previous one is fully built, bulletproof,
 smoke-tested, and actually functioning. Each phase has five sub-phases and each is solidified before
-the next. Integration happens only when every phase underneath it stands on its own.
+the next; from Phase 2 on, each sub-phase has three mini-phases (P2.1.1, P2.1.2, P2.1.3, P2.2.1, ...).
+At the end of every sub-phase the work STOPS: the owner is told what is done, what is in test and
+what is outstanding, and the next sub-phase begins only when the owner says so. Integration happens
+only when every phase underneath it stands on its own.
 
 ---
 

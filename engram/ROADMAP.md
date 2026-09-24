@@ -41,7 +41,8 @@ control beside it (R4). None of these is claimed yet.
 Each mini-phase ends with the strict Linux build and every suite green; each **.3** ends with the full
 gate (`make gate`: Linux, ASan+UBSan, TSan, Windows build, Wine, cross-platform identity, system DLLs
 only). Each phase ends with its report to the owner. A mini-phase is committed and pushed when its
-evidence is in, and not before.
+evidence is in, and not before; below, ✅ and a commit mark each one that is. Work stops at the end of
+each sub-phase until the owner says to go on.
 
 ---
 
@@ -57,21 +58,21 @@ evidence is in, and not before.
 
 ---
 
-## Phase 2 — the slow store: weights that learn
+## Phase 2 — the slow store: weights that learn (in progress: P2.1 and P2.2.1 done; next P2.2.2)
 
-**P2.1 — The expert**
-- **P2.1.1** Research: what the expert reads and how its weights move. Hashed contexts vs a byte
+**P2.1 — The expert** ✅ gated
+- **P2.1.1** ✅ `9a49b39` Research: what the expert reads and how its weights move. Hashed contexts vs a byte
   window; normalisation orientation of the Cascade update; head precision; width, buckets, orders;
   constant vs scheduled learning rate. Chosen on a DEV split, confirmed once on TEST, against count
   models and a float control. Deliverable: `research/p2_slow/`.
-- **P2.1.2** Build the primitives: `engram_math` (exp/log2 from + − × ÷), `engram_cascade` (the word,
+- **P2.1.2** ✅ `fdfe6a4` Build the primitives: `engram_math` (exp/log2 from + − × ÷), `engram_cascade` (the word,
   the update, the integer kernels, persistence), `engram_ctx` (hashed contexts). Each bit-exact against
   an independent Python reference; MATHPRINT/CASCADEPRINT across platforms.
-- **P2.1.3** Build the expert's forward pass and `bits()`: bit-exact against the Python reference;
+- **P2.1.3** ✅ `6b58892` Build the expert's forward pass and `bits()`: bit-exact against the Python reference;
   allocation sweeps; EXPERTPRINT across platforms; speed measured. Sub-phase gate.
 
 **P2.2 — Learning**
-- **P2.2.1** The backward pass: norm, straight-through quantisation, bag; gradients checked against a
+- **P2.2.1** ✅ `63d1c6e` The backward pass: norm, straight-through quantisation, bag; gradients checked against a
   float finite-difference shadow.
 - **P2.2.2** The training step: Cascade updates (rows and units) + Adam for gains and bias; N steps
   bit-exact against the Python reference.
