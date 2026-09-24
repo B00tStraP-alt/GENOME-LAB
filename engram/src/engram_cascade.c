@@ -54,49 +54,7 @@ void engram_cascade_free(engram_cascade *m)
     memset(m, 0, sizeof *m);
 }
 
-void engram_cascade_update_rows(engram_cascade *m, const float *g, float lr, uint64_t step, uint32_t r0,
-                                uint32_t r1, uint64_t *moved, uint64_t *flipped)
-{
-    const uint32_t K = m->K, top = 3u * m->K - 1u, cols = m->cols;
-    const float cap = (float)m->K;
-    uint64_t mv = 0, fl = 0;
-    uint32_t r, c;
-    for (r = r0; r < r1 && r < m->rows; r++) {
-        const float *gr = g + (size_t)r * cols;
-        uint8_t *pr = m->pos + (size_t)r * cols;
-        int8_t *vr = m->val + (size_t)r * cols;
-        double ss = 0.0;
-        float inv;
-        for (c = 0; c < cols; c++) ss += (double)gr[c] * (double)gr[c];
-        /* rms + 1e-12, as the prototype; an all-zero row moves nothing */
-        inv = (float)(1.0 / (sqrt(ss / (double)cols) + 1e-12));
-        for (c = 0; c < cols; c++) {
-            float u = -lr * gr[c] * inv, mag = u < 0.0f ? -u : u, whole, r24;
-            uint32_t p = pr[c], steps;
-            int up = u > 0.0f, v = engram_cascade_value(p, K);
-            if (mag > cap) mag = cap;
-            if (mag == 0.0f) continue;
-            if ((v > 0 && !up) || (v < 0 && up)) mag *= m->meta[engram_cascade_depth(p, K)];
-            whole = floorf(mag);
-            r24 = engram_cascade_uniform(m->seed, step, (uint64_t)r * cols + c);
-            steps = (uint32_t)whole + (r24 < mag - whole ? 1u : 0u);
-            if (!steps) continue;
-            if (up) p = p + steps > top ? top : p + steps;
-            else p = p < steps ? 0u : p - steps;
-            if (p != pr[c]) {
-                int nv = engram_cascade_value(p, K);
-                mv++;
-                if (nv != v) fl++;
-                pr[c] = (uint8_t)p;
-                vr[c] = (int8_t)nv;
-            }
-        }
-    }
-    if (moved) *moved += mv;
-    if (flipped) *flipped += fl;
-}
-
-/* one weight's move: the body both updates share */
+/* One weight's move: the body both updates share. u is the desired move in positions. */
 static void engram_cascade_move(engram_cascade *m, size_t cell, float u, uint64_t step, uint64_t key,
                                 uint64_t *mv, uint64_t *fl)
 {
@@ -119,6 +77,26 @@ static void engram_cascade_move(engram_cascade *m, size_t cell, float u, uint64_
         m->pos[cell] = (uint8_t)p;
         m->val[cell] = (int8_t)nv;
     }
+}
+
+void engram_cascade_update_rows(engram_cascade *m, const float *g, float lr, uint64_t step, uint32_t r0,
+                                uint32_t r1, uint64_t *moved, uint64_t *flipped)
+{
+    const uint32_t cols = m->cols;
+    uint64_t mv = 0, fl = 0;
+    uint32_t r, c;
+    for (r = r0; r < r1 && r < m->rows; r++) {
+        const float *gr = g + (size_t)r * cols;
+        double ss = 0.0;
+        float inv;
+        for (c = 0; c < cols; c++) ss += (double)gr[c] * (double)gr[c];
+        /* rms + 1e-12, as the prototype; an all-zero row moves nothing */
+        inv = (float)(1.0 / (sqrt(ss / (double)cols) + 1e-12));
+        for (c = 0; c < cols; c++)
+            engram_cascade_move(m, (size_t)r * cols + c, (-lr * gr[c]) * inv, step, (uint64_t)r * cols + c, &mv, &fl);
+    }
+    if (moved) *moved += mv;
+    if (flipped) *flipped += fl;
 }
 
 void engram_cascade_update_units(engram_cascade *m, const uint32_t *feat, size_t n_feat, const float *g, float lr,

@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """
 mutants_p15.py -- the P1.5 mutation campaign: is every check in the crypto, the container, the keyfile
-and the loaders actually TESTED?
-
-Each mutant is one deliberate defect (a round constant changed, a check deleted, a counter dropped).
-The tree is copied to build/mutants/, the mutant applied, test_crypto and test_persist built and run in
-QUICK mode (test_core too for the platform layer): a mutant is KILLED if a suite fails. A survivor is
-either a test gap -- closed, and the mutant re-run -- or EQUIVALENT: no input can tell it apart, and
-the reason is written beside it in COMMANDMENTS.md (W-P1.5-8).
+and the loaders actually TESTED? (COMMANDMENTS W-P1.5-8.) The runner is tools/mutants.py.
 
 Usage:  tools/mutants_p15.py [prefix ...]      (a prefix selects mutants by name, e.g. C13 S1 P9)
 """
-import os, shutil, subprocess, sys
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-W = os.path.join(REPO, "build", "mutants")
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mutants  # noqa: E402
+
 M = [
  ("C1 ct_equal ignores the last byte", "engram_crypto.c", "for (i = 0; i < n; i++) d = (uint8_t)(d | (x[i] ^ y[i]));", "for (i = 0; i + 1u < n; i++) d = (uint8_t)(d | (x[i] ^ y[i]));"),
  ("C2 SHA-256 round constant", "engram_crypto.c", "0x428a2f98u", "0x428a2f99u"),
@@ -79,63 +76,6 @@ M = [
   "    dir = engram_dirname_dup(path);\n    if (!dir) { rc = ENGRAM_E_MEM; goto done; }\n    if (engram_io_tick()) { rc = ENGRAM_E_IO; goto done; }\n    do { dfd = open(dir"),
 ]
 
-WINE_ONLY = {"X3"}
-
-
-def sh(cmd, cwd, timeout=600):
-    try:
-        p = subprocess.run(cmd, cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
-        return p.returncode, p.stdout.decode("utf-8", "replace")
-    except subprocess.TimeoutExpired:
-        return 124, "TIMEOUT"
-
-def main():
-    only = sys.argv[1:]
-    if os.path.exists(W): shutil.rmtree(W)
-    os.makedirs(W)
-    for d in ("src", "test"): shutil.copytree(os.path.join(REPO, d), os.path.join(W, d), ignore=shutil.ignore_patterns("data"))
-    os.symlink(os.path.join(REPO, "test", "data"), os.path.join(W, "test", "data"))
-    shutil.copy(os.path.join(REPO, "Makefile"), W)
-    rc, out = sh("make -s -j8 build/linux/test_crypto build/linux/test_persist build/linux/test_core", W)
-    assert rc == 0, out
-    killed = survived = invalid = 0
-    for m in M:
-        name, f, edits = m[0], m[1], list(zip(m[2::2], m[3::2]))
-        if only and not any(name.split()[0] == o or name.startswith(o + " ") for o in only): continue
-        path = os.path.join(W, "src", f)
-        orig = open(path).read()
-        text, bad = orig, None
-        for old, new in edits:
-            if text.count(old) != 1: bad = text.count(old); break
-            text = text.replace(old, new)
-        if bad is not None:
-            print("%-58s PATTERN FOUND %d TIMES" % (name, bad)); invalid += 1; continue
-        open(path, "w").write(text)
-        rc, out = sh("make -s build/linux/test_crypto build/linux/test_persist build/linux/test_core", W)
-        if rc != 0:
-            print("%-58s DID NOT COMPILE" % name); print(out[-800:]); invalid += 1
-        else:
-            fails = []
-            for t in ("test_crypto", "test_persist", "test_core"):
-                if f != "engram_plat.c" and t == "test_core": continue
-                r, o = sh("ENGRAM_TEST_QUICK=1 ./" + t, os.path.join(W, "build/linux"), timeout=300)
-                if r != 0:
-                    lines = [l.strip() for l in o.splitlines() if "FAIL [" in l and "planted failure" not in l]
-                    fails.append("%s(%s)" % (t, lines[0][:110] if lines else ("exit %d" % r)))
-            if not fails and name.split()[0] in WINE_ONLY:
-                # a defect only Windows can show (an allocation Linux does not make): the Windows build,
-                # run under Wine
-                rc2, out2 = sh("make -s build/win/test_persist.exe", W)
-                if rc2 == 0:
-                    r, o = sh("WINEPREFIX=%s WINEDEBUG=-all WINEDLLOVERRIDES='mscoree,mshtml=' ENGRAM_TEST_QUICK=1 wine ./test_persist.exe"
-                              % os.path.join(REPO, "build", "wineprefix"), os.path.join(W, "build/win"), timeout=900)
-                    if r != 0:
-                        lines = [l.strip() for l in o.replace("\r", "").splitlines() if "FAIL [" in l and "planted failure" not in l]
-                        fails.append("wine test_persist(%s)" % (lines[0][:100] if lines else ("exit %d" % r)))
-            if fails: killed += 1; print("%-58s KILLED   %s" % (name, fails[0]))
-            else: survived += 1; print("%-58s SURVIVED" % name)
-        open(path, "w").write(orig)
-        sys.stdout.flush()
-    print("\n%d killed, %d survived, %d invalid, of %d" % (killed, survived, invalid, len(M)))
-
-main()
+if __name__ == "__main__":
+    mutants.run(M, ["test_crypto", "test_persist"], by_file={"engram_plat.c": ["test_core"]},
+                wine_only={"X3": "test_persist"})
