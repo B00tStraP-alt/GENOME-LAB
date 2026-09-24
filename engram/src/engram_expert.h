@@ -102,6 +102,62 @@ void      engram_expert_stats_get(const engram_expert *e, engram_expert_stats *s
  * parameter's bits. */
 uint64_t  engram_expert_fingerprint(const engram_expert *e);
 
+/* ---- THE BACKWARD PASS, EXACTLY ------------------------------------------------------------------
+ * Over a batch of B positions, in the order given, the gradient of the batch's MEAN loss in nats,
+ * (1/B) sum_b -ln p(target_b) -- which is bits * ln 2 / B of the bits returned. Straight-through: the int8
+ * quantisation is treated as the identity, so a layer's input x is taken as x_c = (float)((double)q_c * s).
+ *
+ * PHASE A, per position (independent of every other position):
+ *   p_v = exp(l_v - m) / Z  (double, Z summed in index order);  dl_v = (float)((p_v - [v == target]) / B)
+ *   norm_back(dy, gain, z, scale, r):  u_i = (double)dy_i * gain_i;  suv = sum_i u_i * ((double)z_i * scale)
+ *                                      (double, index order);  dv_i = (float)(u_i / r - ((double)z_i * scale)
+ *                                      * suv / (n r^3)),  r^3 = r * r * r
+ *   (z, scale, r: the layer's own, from its forward; alpha = 1 / sqrt(W) and c0 = 1 / sqrt(ORDERS), the
+ *   doubles the forward pass scales by)
+ *   head:     dv = norm_back(dl, head gains, ...);  dva_v = (float)((double)dv_v * alpha)
+ *             dx = the transposed product of the head's values with dva (engram_cascade_matvec_t)
+ *   layer j = hidden .. 0:  da_i = a_i > 0 ? dx_i : 0 (a: after gain and ReLU);  dv = norm_back(da, layer
+ *             j's gains, ...)
+ *             j > 0: dva_i = (float)((double)dv_i * alpha);  dx = transposed product of hidden j-1 with dva
+ *             j = 0: d0_i = (float)((double)dv_i * c0)
+ * PHASE B, reductions, each output element from +0, summed over the positions IN ORDER (float: the
+ * product rounded, then the sum):
+ *   bias_v   += dl_v                       head gain_v  += dl_v * n_head,v      layer gain_i += da_i * n_i
+ *   head W[v][c] += dva_v * x_c (x: the last layer's)      hidden j W[i][c] += dva_i * x_c (x: layer j-1's)
+ *   bag  row f, unit i  += d0_i  for every order k whose id is f (positions in order, then orders)
+ * So a split of the positions, or of the output elements, over threads changes nothing (P2.2.3). The
+ * loss returned is the batch's bits, summed in position order as engram_expert_bits sums them.
+ *
+ * The FORMULAS are proven against central finite differences of the loss in a float64 twin of the network
+ * (tools/ref_expert.py `shadow_gradcheck`, which also proves it can fail); the C is proven equal, bit for
+ * bit, to the Python implementation of the text above (test_expert). */
+typedef struct engram_expert_grad engram_expert_grad;
+
+#define ENGRAM_EXPERT_MAX_BATCH 65536u
+
+/* A gradient workspace for batches of up to batch_max (1 .. MAX_BATCH) positions, for experts of e's shape. */
+engram_rc engram_expert_grad_open(engram_expert_grad **out, const engram_expert *e, size_t batch_max);
+void      engram_expert_grad_close(engram_expert_grad *g);
+
+/* Forward and backward over text[pos[0]], ..., text[pos[B-1]] (each < n); the workspace's gradients are
+ * REPLACED, not accumulated. *bits: the batch's loss. ENGRAM_E_ARG for B == 0, B > batch_max, a position
+ * >= n, or a workspace made for another expert's shape. Allocates nothing. */
+engram_rc engram_expert_backward(const engram_expert *e, engram_expert_grad *g, const uint8_t *text, size_t n,
+                                 const size_t *pos, size_t B, double *bits);
+
+typedef struct {
+    const float    *bias;            /* 256                                              */
+    const float    *gain;            /* n_gain, laid out as engram_expert_units' gain    */
+    size_t          n_gain;
+    const float    *head;            /* 256 x W                                          */
+    const float    *hidden[ENGRAM_EXPERT_MAX_HIDDEN];   /* W x W each                    */
+    const uint32_t *feat;            /* the batch's distinct features, ascending         */
+    size_t          n_feat;
+    const float    *bag;             /* n_feat x W: row i is feature feat[i]'s gradient  */
+} engram_expert_grad_view;
+
+void      engram_expert_grad_get(const engram_expert_grad *g, engram_expert_grad_view *v);
+
 #ifdef __cplusplus
 }
 #endif

@@ -41,15 +41,15 @@ M = [
  ("X2 ctx: orders share one block", "engram_ctx.c", "(((uint64_t)(k - 1u) << c->buckets_log2) | (h & mask))", "((uint64_t)0u | (h & mask))"),
  ("X3 ctx: order k hashes only its own byte", "engram_ctx.c", "        h = engram_mix2(h, b);", "        h = engram_mix2(c->seed + k, b);"),
  # ---- engram_expert
- ("E1 expert: the bag's 1/sqrt(orders) scale dropped", "engram_expert.c", "engram_norm_i(e->zi, W, 1.0 / sqrt((double)e->cfg.ctx.orders), e->act);", "engram_norm_i(e->zi, W, 1.0, e->act);"),
+ ("E1 expert: the bag's 1/sqrt(orders) scale dropped", "engram_expert.c", "c->sc[0] = 1.0 / sqrt((double)e->cfg.ctx.orders);", "c->sc[0] = 1.0;"),
  ("E2 expert: the norm's epsilon changed", "engram_expert.c", "r = sqrt(ss / (double)n + 1e-6);", "r = sqrt(ss / (double)n + 1e-5);"),
  ("E3 expert: no ReLU", "engram_expert.c", "        a[i] = y > 0.0f ? y : 0.0f;", "        a[i] = y;"),
  ("E4 expert: int8 scale 128", "engram_expert.c", "s = (double)mx / 127.0 + 1e-12;", "s = (double)mx / 128.0 + 1e-12;"),
  ("E5 expert: the head's bias ignored", "engram_expert.c", " + e->bias[v];", ";"),
- ("E6 expert: the max logit not found (first one kept)", "engram_expert.c", "if ((double)e->logit[v] > m) m = (double)e->logit[v];", "if (0) m = (double)e->logit[v];"),
+ ("E6 expert: the max logit not found (first one kept)", "engram_expert.c", "if ((double)logit[v] > m) m = (double)logit[v];", "if (0) m = (double)logit[v];"),
  ("E7 expert: the head seeded like the bag", "engram_expert.c", "engram_mix2(cfg->seed, 99u)", "engram_mix2(cfg->seed, 1u)"),
  ("E8 expert: the size bound not enforced", "engram_expert.c", "if (engram_expert_weights(c) > ENGRAM_EXPERT_MAX_WEIGHTS) return ENGRAM_E_FULL;", "(void)0;"),
- ("E9 expert: hidden layers read the head's gains", "engram_expert.c", "s = engram_act_quant(e->act, e->gain + (size_t)(j + 1u) * W, W, e->q);", "s = engram_act_quant(e->act, e->gain, W, e->q);"),
+ ("E9 expert: hidden layers read the first layer's gains", "engram_expert.c", "engram_act_quant(c->n[j + 1u], e->gain + (size_t)(j + 1u) * W, W,", "engram_act_quant(c->n[j + 1u], e->gain, W,"),
 ]
 
 if __name__ == "__main__":
